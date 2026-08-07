@@ -164,7 +164,7 @@ PT 離職：用「停用」而非直接刪除，保留過去班表紀錄；停�
 
 ## 八、GitHub Repo
 
-（待建立）
+https://github.com/ejoejo510682/Work-Scheduling-system
 
 ## 九、配套文件
 
