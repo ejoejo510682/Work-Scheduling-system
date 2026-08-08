@@ -12,6 +12,7 @@ export default async function AdminLayout({
   const navLinks = [
     { href: "/admin", label: "今日總覽" },
     { href: "/admin/ability-summary", label: "能力總表" },
+    { href: "/admin/availability", label: "可上班範圍" },
     ...(adminUser.role === "主管"
       ? [
           { href: "/admin/positions", label: "崗位管理" },
