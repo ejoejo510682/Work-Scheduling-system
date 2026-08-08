@@ -162,9 +162,10 @@ PT 離職：用「停用」而非直接刪除，保留過去班表紀錄；停�
 | 6 | 本週追加任務 |
 | 7 | 班表檢視／列印／匯出 PDF |
 
-## 八、GitHub Repo
+## 八、GitHub Repo / 部署網址
 
-https://github.com/ejoejo510682/Work-Scheduling-system
+- GitHub：https://github.com/ejoejo510682/Work-Scheduling-system
+- 正式網址（Vercel）：https://work-scheduling-system.vercel.app
 
 ## 九、配套文件
 

@@ -19,4 +19,5 @@
   - 建立 /admin/positions（崗位管理，含新增）、/admin/pt（PT 名單管理，含新增）、/admin/abilities（能力等級 7×7 表格，直接調整一/二/三級）三個主管專用頁面
   - 後台導覽列依角色顯示不同連結
   - 使用者已用真實帳密測試登入成功
-- 下一步：Phase 2 能力總表查詢頁（給主管與排班人員都能看的唯讀版本）；並準備部署到 Vercel
+- 下一步：Phase 2 能力總表查詢頁（給主管與排班人員都能看的唯讀版本）
+- 已部署到 Vercel：https://work-scheduling-system.vercel.app （使用者自行完成 GitHub/Vercel 連動與環境變數設定；已用瀏覽器確認登入頁正常運作、無錯誤）
