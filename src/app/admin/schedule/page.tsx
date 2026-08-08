@@ -38,6 +38,12 @@ export default async function SchedulePage({
         >
           下一週 →
         </Link>
+        <Link
+          href={`/admin/schedule/print?week=${monday}`}
+          className="ml-auto rounded bg-zinc-900 px-3 py-1 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          🖨 列印／匯出 PDF
+        </Link>
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4 md:grid-cols-7">
