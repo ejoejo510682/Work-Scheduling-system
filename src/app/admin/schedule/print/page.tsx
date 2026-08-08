@@ -6,27 +6,35 @@ import { addDays, formatDateLabel, getDefaultWeekMonday, getMonday, WEEKDAY_LABE
 import type { Slot } from "@/lib/constants";
 import { PrintButton } from "@/components/admin/PrintButton";
 
-// 統一用同一個藍色色系，「出訂單前/出訂單後」只靠深淺區分，上午下午共用同一組顏色；
-// 「出貨完成後」是唯一跳出來的顏色（灰），代表跟前面的訂單流程性質不同
-const NAVY = "#1F3864";
-const HEADER_BLUE = "#2E5395";
-const PERSON_BG = "#C9D5EA";
-const PERIOD_BG = "#E8E2D3";
-const INK = "#1A1A1A";
+// 設計系統：以「出貨單/提單」的紙本質感為方向——暖色調的墨與紙、
+// 一個沉穩的鋼青色（沃流＝水流）當主結構色、一個琥珀色（倉儲膠帶色）當唯一強調色。
+// 時段不再用大面積色塊填滿儲存格（會犧牲對比與辨識度），改用細左邊條 + 小標籤，
+// 讓顏色留在「結構」上，文字閱讀維持乾淨的黑墨字。
+const INK = "#211D18";
+const MUTED = "#6E685C";
+const PAPER = "#FFFFFF";
+const STEEL = "#2C4A54";
+const STEEL_SOFT = "#5C7880";
+const STEEL_TINT = "#EEF2F1";
+const AMBER = "#B96A28";
+const AMBER_TINT = "#FBEFE1";
+const LINE = "#D9D3C4";
+
+const SERIF = '"Noto Serif TC", "PMingLiU", "MingLiU", serif';
+const SANS = '"Microsoft JhengHei", "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif';
 
 const SLOT_ROWS: {
   slot: Slot;
   label: string;
   period: "上午" | "下午" | null;
   periodSpan: number;
-  labelBg: string;
-  cellBg: string;
+  accent: string;
 }[] = [
-  { slot: "上午出訂單前", label: "出訂單前", period: "上午", periodSpan: 2, labelBg: "#5B7FA6", cellBg: "#E4EAF3" },
-  { slot: "上午出訂單後", label: "出訂單後", period: "上午", periodSpan: 0, labelBg: "#33547A", cellBg: "#D6DFEC" },
-  { slot: "下午出訂單前", label: "出訂單前", period: "下午", periodSpan: 2, labelBg: "#5B7FA6", cellBg: "#E4EAF3" },
-  { slot: "下午出訂單後", label: "出訂單後", period: "下午", periodSpan: 0, labelBg: "#33547A", cellBg: "#D6DFEC" },
-  { slot: "出貨完成後", label: "出貨完成後", period: null, periodSpan: 1, labelBg: "#6B6B6B", cellBg: "#ECECEC" },
+  { slot: "上午出訂單前", label: "出訂單前", period: "上午", periodSpan: 2, accent: AMBER },
+  { slot: "上午出訂單後", label: "出訂單後", period: "上午", periodSpan: 0, accent: STEEL },
+  { slot: "下午出訂單前", label: "出訂單前", period: "下午", periodSpan: 2, accent: AMBER },
+  { slot: "下午出訂單後", label: "出訂單後", period: "下午", periodSpan: 0, accent: STEEL },
+  { slot: "出貨完成後", label: "出貨完成後", period: null, periodSpan: 1, accent: MUTED },
 ];
 
 export default async function SchedulePrintPage({
@@ -60,17 +68,18 @@ export default async function SchedulePrintPage({
     );
     return rows
       .sort((a, b) => a.priority - b.priority)
-      .map((a) => {
-        const name = positionNameById.get(a.position_id) ?? "?";
-        return a.priority === 2 ? `${name}（備援）` : name;
-      });
+      .map((a) => ({
+        name: positionNameById.get(a.position_id) ?? "?",
+        backup: a.priority === 2,
+      }));
   }
 
   return (
-    <div style={{ colorScheme: "light" }}>
+    <div style={{ colorScheme: "light", fontFamily: SANS, color: INK }}>
       <style>{`
         @media print {
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          tbody.person-block { break-inside: avoid; }
         }
       `}</style>
 
@@ -84,49 +93,93 @@ export default async function SchedulePrintPage({
         <PrintButton />
       </div>
 
+      {/* 單頭：仿出貨單的抬頭列，標題用襯線字加粗，跟內文的黑體區隔出「文件感」 */}
+      <div
+        className="flex items-baseline justify-between px-4 py-3 mb-0"
+        style={{ backgroundColor: STEEL, color: "#FFFFFF" }}
+      >
+        <div className="flex items-baseline gap-3">
+          <span className="text-lg font-bold tracking-wide" style={{ fontFamily: SERIF }}>
+            豐鳥(沃流) 每週工作排程表
+          </span>
+          <span className="text-xs" style={{ color: "#CFE0DF" }}>
+            {monday} ～ {sunday}
+          </span>
+        </div>
+      </div>
+
+      {/* 圖例：說明左邊條顏色與（備援）標示的意思，只出現一次，維持精簡 */}
+      <div
+        className="flex items-center gap-5 px-4 py-1.5 print:text-[9px] text-[10px]"
+        style={{ backgroundColor: AMBER_TINT, color: MUTED, borderBottom: `1px solid ${LINE}` }}
+      >
+        <span className="flex items-center gap-1.5">
+          <span style={{ display: "inline-block", width: 10, height: 3, backgroundColor: AMBER }} />
+          出訂單前
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span style={{ display: "inline-block", width: 10, height: 3, backgroundColor: STEEL }} />
+          出訂單後
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span style={{ display: "inline-block", width: 10, height: 3, backgroundColor: MUTED }} />
+          出貨完成後
+        </span>
+        <span className="italic">（備援）＝支援任務，非主要任務</span>
+      </div>
+
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-xs print:text-[10px]" style={{ borderColor: "#999" }}>
+        <table
+          className="w-full border-collapse text-xs print:text-[10px]"
+          style={{ borderColor: LINE, fontVariantNumeric: "tabular-nums" }}
+        >
           <thead>
-            <tr>
-              <th
-                colSpan={3 + days.length}
-                className="border px-2 py-2 text-center text-sm font-bold print:text-sm"
-                style={{ backgroundColor: NAVY, borderColor: "#999", color: "#FFFFFF" }}
-              >
-                豐鳥(沃流) 每週工作排程表　{monday} ～ {sunday}
-              </th>
-            </tr>
             <tr>
               {["人員", "時段", "時間節點"].map((label) => (
                 <th
                   key={label}
-                  className="border px-2 py-1"
-                  style={{ backgroundColor: HEADER_BLUE, borderColor: "#999", color: "#FFFFFF" }}
+                  className="border px-2 py-1.5 font-semibold"
+                  style={{ backgroundColor: STEEL_TINT, borderColor: LINE, color: STEEL }}
                 >
                   {label}
                 </th>
               ))}
-              {days.map((date, i) => (
-                <th
-                  key={date}
-                  className="border px-2 py-1 whitespace-nowrap"
-                  style={{ backgroundColor: HEADER_BLUE, borderColor: "#999", color: "#FFFFFF" }}
-                >
-                  {formatDateLabel(date)}週{WEEKDAY_LABELS[i]}
-                </th>
-              ))}
+              {days.map((date, i) => {
+                const isWeekend = i >= 5;
+                return (
+                  <th
+                    key={date}
+                    className="border px-2 py-1.5 whitespace-nowrap font-semibold"
+                    style={{
+                      backgroundColor: STEEL_TINT,
+                      borderColor: LINE,
+                      color: isWeekend ? AMBER : STEEL,
+                      borderBottom: isWeekend ? `2px solid ${AMBER}` : undefined,
+                    }}
+                  >
+                    {formatDateLabel(date)}　週{WEEKDAY_LABELS[i]}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
-          <tbody>
-            {(pt ?? []).map((person) => (
-              <Fragment key={person.id}>
+          {(pt ?? []).map((person, personIdx) => {
+            const banded = personIdx % 2 === 1;
+            const rowBg = banded ? STEEL_TINT : PAPER;
+            return (
+              <tbody key={person.id} className="person-block">
                 {SLOT_ROWS.map((row, rowIdx) => (
-                  <tr key={`${person.id}-${row.slot}`}>
+                  <tr key={`${person.id}-${row.slot}`} style={{ borderTop: rowIdx === 0 ? `2px dashed ${LINE}` : undefined }}>
                     {rowIdx === 0 && (
                       <td
                         rowSpan={SLOT_ROWS.length}
-                        className="border px-2 py-1 text-center align-middle font-bold"
-                        style={{ backgroundColor: PERSON_BG, borderColor: "#999", color: INK }}
+                        className="border px-2 py-1 text-center align-middle font-bold text-sm print:text-xs"
+                        style={{
+                          backgroundColor: rowBg,
+                          borderColor: LINE,
+                          color: STEEL,
+                          borderLeft: `4px solid ${STEEL}`,
+                        }}
                       >
                         {person.name}
                       </td>
@@ -134,37 +187,47 @@ export default async function SchedulePrintPage({
                     {row.periodSpan > 0 && (
                       <td
                         rowSpan={row.periodSpan}
-                        className="border px-2 py-1 text-center align-middle font-medium"
-                        style={{ backgroundColor: PERIOD_BG, borderColor: "#999", color: INK }}
+                        className="border px-1.5 py-1 text-center align-middle font-medium"
+                        style={{ backgroundColor: rowBg, borderColor: LINE, color: MUTED }}
                       >
                         {row.period}
                       </td>
                     )}
                     <td
-                      className="border px-2 py-1 text-center whitespace-nowrap font-medium"
-                      style={{ backgroundColor: row.labelBg, borderColor: "#999", color: "#FFFFFF" }}
+                      className="border px-1.5 py-1 text-center whitespace-nowrap font-medium"
+                      style={{
+                        backgroundColor: rowBg,
+                        borderColor: LINE,
+                        color: INK,
+                        borderLeft: `3px solid ${row.accent}`,
+                      }}
                     >
                       {row.label}
                     </td>
                     {days.map((date) => {
-                      const lines = cellFor(person.id, row.slot, date);
+                      const entries = cellFor(person.id, row.slot, date);
                       return (
                         <td
                           key={date}
                           className="border px-2 py-1 align-top"
-                          style={{ backgroundColor: row.cellBg, borderColor: "#999", color: INK }}
+                          style={{ backgroundColor: rowBg, borderColor: LINE, color: INK }}
                         >
-                          {lines.length > 0
-                            ? lines.map((line, idx) => <div key={idx}>{line}</div>)
-                            : ""}
+                          {entries.length > 0
+                            ? entries.map((e, idx) => (
+                                <div key={idx} style={e.backup ? { color: MUTED, fontStyle: "italic" } : undefined}>
+                                  {e.name}
+                                  {e.backup && "（備援）"}
+                                </div>
+                              ))
+                            : <span style={{ color: LINE }}>－</span>}
                         </td>
                       );
                     })}
                   </tr>
                 ))}
-              </Fragment>
-            ))}
-          </tbody>
+              </tbody>
+            );
+          })}
         </table>
       </div>
     </div>
