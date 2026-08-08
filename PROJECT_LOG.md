@@ -49,3 +49,4 @@
   1. `lib/supabase/server.ts` 的 `setAll` 包 try/catch，被擋下時不要整頁當機
   2. 新增 `src/proxy.ts`（這個 Next.js 版本把 `middleware.ts` 改名成 `proxy.ts`），在進 /admin 每個頁面前先幫 session 續期，從源頭大幅降低觸發機會
   這是這台 Next.js 版本第一次真的踩到 AGENTS.md 警告的「跟你認知的 Next.js 不一樣」的地雷（middleware → proxy 改名）
+- 班表列印/匯出 PDF 排版改版：使用者提供原本手動維護的 Excel 週排程表當參考（人員分組、依時段上色），把 /admin/schedule/print 從「崗位 x 日期」的表格改成「人員 x 日期」，每位 PT 一個區塊、5 個時段各一列，時段用顏色區分（上午出訂單前=紅、上午出訂單後=橘、下午出訂單前=藍、下午出訂單後=綠、出貨完成後=灰），跟原本熟悉的配色風格對齊
