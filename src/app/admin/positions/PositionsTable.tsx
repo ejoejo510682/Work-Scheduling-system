@@ -25,6 +25,10 @@ export function PositionsTable({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+
   const headcountByPosition = new Map(initialHeadcounts.map((h) => [h.position_id, h.headcount]));
   const slotsByPosition = new Map<string, string[]>();
   for (const row of initialSlotMap) {
@@ -80,6 +84,45 @@ export function PositionsTable({
     router.refresh();
   }
 
+  function startEditing(position: Position) {
+    setEditingId(position.id);
+    setEditingName(position.name);
+    setRenameError(null);
+  }
+
+  async function saveRename(position: Position) {
+    const trimmed = editingName.trim();
+    if (!trimmed || trimmed === position.name) {
+      setEditingId(null);
+      return;
+    }
+    setSaving(true);
+    setRenameError(null);
+    const supabase = createClient();
+
+    const { error: renameError } = await supabase
+      .from("positions")
+      .update({ name: trimmed })
+      .eq("id", position.id);
+
+    if (renameError) {
+      setRenameError(renameError.message);
+      setSaving(false);
+      return;
+    }
+
+    // 崗位訓練項目是新增崗位時自動建立的同名項目，改名一起同步，避免兩邊看起來對不上
+    await supabase
+      .from("training_items")
+      .update({ name: `${trimmed}訓練` })
+      .eq("position_id", position.id)
+      .eq("name", `${position.name}訓練`);
+
+    setSaving(false);
+    setEditingId(null);
+    router.refresh();
+  }
+
   return (
     <div className="mt-6 space-y-8">
       <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
@@ -95,7 +138,47 @@ export function PositionsTable({
           <tbody>
             {initialPositions.map((p) => (
               <tr key={p.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-50">{p.name}</td>
+                <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-50">
+                  {editingId === p.id ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") saveRename(p);
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                        className="w-32 rounded border border-zinc-300 px-2 py-1 text-sm font-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
+                      />
+                      <button
+                        onClick={() => saveRename(p)}
+                        disabled={saving}
+                        className="text-xs font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-50 dark:text-emerald-400"
+                      >
+                        儲存
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        disabled={saving}
+                        className="text-xs text-zinc-500 hover:text-zinc-700 disabled:opacity-50 dark:hover:text-zinc-300"
+                      >
+                        取消
+                      </button>
+                      {renameError && <p className="text-xs text-red-600 dark:text-red-400">{renameError}</p>}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span>{p.name}</span>
+                      <button
+                        onClick={() => startEditing(p)}
+                        className="text-xs font-normal text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                      >
+                        編輯
+                      </button>
+                    </div>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
                   {headcountByPosition.get(p.id) ?? "—"} 人
                 </td>
