@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
-import { addDays, getMonday, toDateStr, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
+import { addDays, getDefaultWeekMonday, getMonday, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
 
 export default async function SchedulePage({
   searchParams,
@@ -10,7 +10,7 @@ export default async function SchedulePage({
   await requireRole(["主管", "排班人員"]);
 
   const params = await searchParams;
-  const monday = getMonday(params.week ?? toDateStr(new Date()));
+  const monday = params.week ? getMonday(params.week) : getDefaultWeekMonday();
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
   const prevWeek = addDays(monday, -7);
   const nextWeek = addDays(monday, 7);

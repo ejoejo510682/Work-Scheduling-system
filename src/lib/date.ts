@@ -22,6 +22,15 @@ export function getMonday(dateStr: string): string {
   return addDays(dateStr, offset);
 }
 
+// 沒有指定週次時，預設要顯示哪一週：平日顯示這一週；週六日通常已經在準備下週，
+// 直接預設跳到下一週，避免每次都要手動點「下一週」
+export function getDefaultWeekMonday(): string {
+  const today = new Date();
+  const monday = getMonday(toDateStr(today));
+  const isWeekend = today.getDay() === 0 || today.getDay() === 6;
+  return isWeekend ? addDays(monday, 7) : monday;
+}
+
 export function formatDateLabel(dateStr: string): string {
   const [, m, d] = dateStr.split("-").map(Number);
   return `${m}/${d}`;

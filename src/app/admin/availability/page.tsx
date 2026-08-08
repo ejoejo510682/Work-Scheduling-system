@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
-import { addDays, getMonday, toDateStr } from "@/lib/date";
+import { addDays, getDefaultWeekMonday, getMonday } from "@/lib/date";
 import { AvailabilityGrid } from "./AvailabilityGrid";
 
 export default async function AvailabilityPage({
@@ -12,7 +12,7 @@ export default async function AvailabilityPage({
   await requireRole(["主管", "排班人員"]);
 
   const params = await searchParams;
-  const monday = getMonday(params.week ?? toDateStr(new Date()));
+  const monday = params.week ? getMonday(params.week) : getDefaultWeekMonday();
   const sunday = addDays(monday, 6);
 
   const supabase = await createClient();

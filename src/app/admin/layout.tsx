@@ -14,6 +14,7 @@ export default async function AdminLayout({
     { href: "/admin/ability-summary", label: "能力總表" },
     { href: "/admin/availability", label: "可上班範圍" },
     { href: "/admin/schedule", label: "週排班表" },
+    { href: "/admin/weekly-tasks", label: "本週追加任務" },
     ...(adminUser.role === "主管"
       ? [
           { href: "/admin/positions", label: "崗位管理" },
