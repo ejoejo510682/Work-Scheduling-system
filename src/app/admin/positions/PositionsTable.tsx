@@ -29,6 +29,10 @@ export function PositionsTable({
   const [editingName, setEditingName] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
 
+  const [editingHeadcountId, setEditingHeadcountId] = useState<string | null>(null);
+  const [editingHeadcountValue, setEditingHeadcountValue] = useState(1);
+  const [headcountError, setHeadcountError] = useState<string | null>(null);
+
   const headcountByPosition = new Map(initialHeadcounts.map((h) => [h.position_id, h.headcount]));
   const slotsByPosition = new Map<string, string[]>();
   for (const row of initialSlotMap) {
@@ -123,6 +127,39 @@ export function PositionsTable({
     router.refresh();
   }
 
+  function startEditingHeadcount(position: Position) {
+    setEditingHeadcountId(position.id);
+    setEditingHeadcountValue(headcountByPosition.get(position.id) ?? 1);
+    setHeadcountError(null);
+  }
+
+  async function saveHeadcount(position: Position) {
+    if (editingHeadcountValue < 1) {
+      setHeadcountError("至少要 1 人");
+      return;
+    }
+    setSaving(true);
+    setHeadcountError(null);
+    const supabase = createClient();
+
+    const { error: upsertError } = await supabase
+      .from("position_headcount")
+      .upsert(
+        { position_id: position.id, headcount: editingHeadcountValue },
+        { onConflict: "position_id" },
+      );
+
+    if (upsertError) {
+      setHeadcountError(upsertError.message);
+      setSaving(false);
+      return;
+    }
+
+    setSaving(false);
+    setEditingHeadcountId(null);
+    router.refresh();
+  }
+
   return (
     <div className="mt-6 space-y-8">
       <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
@@ -180,7 +217,49 @@ export function PositionsTable({
                   )}
                 </td>
                 <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
-                  {headcountByPosition.get(p.id) ?? "—"} 人
+                  {editingHeadcountId === p.id ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        autoFocus
+                        type="number"
+                        min={1}
+                        value={editingHeadcountValue}
+                        onChange={(e) => setEditingHeadcountValue(Number(e.target.value))}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") saveHeadcount(p);
+                          if (e.key === "Escape") setEditingHeadcountId(null);
+                        }}
+                        className="w-16 rounded border border-zinc-300 px-2 py-1 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
+                      />
+                      <button
+                        onClick={() => saveHeadcount(p)}
+                        disabled={saving}
+                        className="text-xs font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-50 dark:text-emerald-400"
+                      >
+                        儲存
+                      </button>
+                      <button
+                        onClick={() => setEditingHeadcountId(null)}
+                        disabled={saving}
+                        className="text-xs text-zinc-500 hover:text-zinc-700 disabled:opacity-50 dark:hover:text-zinc-300"
+                      >
+                        取消
+                      </button>
+                      {headcountError && (
+                        <p className="text-xs text-red-600 dark:text-red-400">{headcountError}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span>{headcountByPosition.get(p.id) ?? "—"} 人</span>
+                      <button
+                        onClick={() => startEditingHeadcount(p)}
+                        className="text-xs font-normal text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                      >
+                        編輯
+                      </button>
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
                   {(slotsByPosition.get(p.id) ?? []).join("、") || "彈性（不綁定固定時段）"}
