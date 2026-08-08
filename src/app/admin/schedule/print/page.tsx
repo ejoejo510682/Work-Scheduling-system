@@ -6,20 +6,27 @@ import { addDays, formatDateLabel, getDefaultWeekMonday, getMonday, WEEKDAY_LABE
 import type { Slot } from "@/lib/constants";
 import { PrintButton } from "@/components/admin/PrintButton";
 
-// 顏色跟倉庫原本 Excel 排程表的配色對齊：出訂單前=紅、上午出訂單後=橘、
-// 下午出訂單前=藍、下午出訂單後=綠、出貨完成後=灰
+// 統一用同一個藍色色系，「出訂單前/出訂單後」只靠深淺區分，上午下午共用同一組顏色；
+// 「出貨完成後」是唯一跳出來的顏色（灰），代表跟前面的訂單流程性質不同
+const NAVY = "#1F3864";
+const HEADER_BLUE = "#2E5395";
+const PERSON_BG = "#C9D5EA";
+const PERIOD_BG = "#E8E2D3";
+const INK = "#1A1A1A";
+
 const SLOT_ROWS: {
   slot: Slot;
+  label: string;
   period: "上午" | "下午" | null;
   periodSpan: number;
   labelBg: string;
   cellBg: string;
 }[] = [
-  { slot: "上午出訂單前", period: "上午", periodSpan: 2, labelBg: "#B03A2E", cellBg: "#FADBD8" },
-  { slot: "上午出訂單後", period: "上午", periodSpan: 0, labelBg: "#D4801F", cellBg: "#FDEBD0" },
-  { slot: "下午出訂單前", period: "下午", periodSpan: 2, labelBg: "#2E6B8A", cellBg: "#D6EAF8" },
-  { slot: "下午出訂單後", period: "下午", periodSpan: 0, labelBg: "#4E7A45", cellBg: "#E2EFDA" },
-  { slot: "出貨完成後", period: null, periodSpan: 1, labelBg: "#6B6B6B", cellBg: "#F2F2F2" },
+  { slot: "上午出訂單前", label: "出訂單前", period: "上午", periodSpan: 2, labelBg: "#5B7FA6", cellBg: "#E4EAF3" },
+  { slot: "上午出訂單後", label: "出訂單後", period: "上午", periodSpan: 0, labelBg: "#33547A", cellBg: "#D6DFEC" },
+  { slot: "下午出訂單前", label: "出訂單前", period: "下午", periodSpan: 2, labelBg: "#5B7FA6", cellBg: "#E4EAF3" },
+  { slot: "下午出訂單後", label: "出訂單後", period: "下午", periodSpan: 0, labelBg: "#33547A", cellBg: "#D6DFEC" },
+  { slot: "出貨完成後", label: "出貨完成後", period: null, periodSpan: 1, labelBg: "#6B6B6B", cellBg: "#ECECEC" },
 ];
 
 export default async function SchedulePrintPage({
@@ -60,7 +67,13 @@ export default async function SchedulePrintPage({
   }
 
   return (
-    <div>
+    <div style={{ colorScheme: "light" }}>
+      <style>{`
+        @media print {
+          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+      `}</style>
+
       <div className="print:hidden mb-4 flex items-center gap-3">
         <Link
           href={`/admin/schedule?week=${monday}`}
@@ -72,16 +85,13 @@ export default async function SchedulePrintPage({
       </div>
 
       <div className="overflow-x-auto">
-        <table
-          className="w-full border-collapse text-xs print:text-[10px]"
-          style={{ borderColor: "#999" }}
-        >
+        <table className="w-full border-collapse text-xs print:text-[10px]" style={{ borderColor: "#999" }}>
           <thead>
             <tr>
               <th
                 colSpan={3 + days.length}
-                className="border px-2 py-2 text-center text-sm font-bold text-white print:text-sm"
-                style={{ backgroundColor: "#1F3864", borderColor: "#999" }}
+                className="border px-2 py-2 text-center text-sm font-bold print:text-sm"
+                style={{ backgroundColor: NAVY, borderColor: "#999", color: "#FFFFFF" }}
               >
                 豐鳥(沃流) 每週工作排程表　{monday} ～ {sunday}
               </th>
@@ -90,8 +100,8 @@ export default async function SchedulePrintPage({
               {["人員", "時段", "時間節點"].map((label) => (
                 <th
                   key={label}
-                  className="border px-2 py-1 text-white"
-                  style={{ backgroundColor: "#2E5395", borderColor: "#999" }}
+                  className="border px-2 py-1"
+                  style={{ backgroundColor: HEADER_BLUE, borderColor: "#999", color: "#FFFFFF" }}
                 >
                   {label}
                 </th>
@@ -99,8 +109,8 @@ export default async function SchedulePrintPage({
               {days.map((date, i) => (
                 <th
                   key={date}
-                  className="border px-2 py-1 whitespace-nowrap text-white"
-                  style={{ backgroundColor: "#2E5395", borderColor: "#999" }}
+                  className="border px-2 py-1 whitespace-nowrap"
+                  style={{ backgroundColor: HEADER_BLUE, borderColor: "#999", color: "#FFFFFF" }}
                 >
                   {formatDateLabel(date)}週{WEEKDAY_LABELS[i]}
                 </th>
@@ -116,7 +126,7 @@ export default async function SchedulePrintPage({
                       <td
                         rowSpan={SLOT_ROWS.length}
                         className="border px-2 py-1 text-center align-middle font-bold"
-                        style={{ backgroundColor: "#D9E2F3", borderColor: "#999" }}
+                        style={{ backgroundColor: PERSON_BG, borderColor: "#999", color: INK }}
                       >
                         {person.name}
                       </td>
@@ -125,24 +135,24 @@ export default async function SchedulePrintPage({
                       <td
                         rowSpan={row.periodSpan}
                         className="border px-2 py-1 text-center align-middle font-medium"
-                        style={{ backgroundColor: "#FDF0D5", borderColor: "#999" }}
+                        style={{ backgroundColor: PERIOD_BG, borderColor: "#999", color: INK }}
                       >
                         {row.period}
                       </td>
                     )}
                     <td
-                      className="border px-2 py-1 text-center whitespace-nowrap font-medium text-white"
-                      style={{ backgroundColor: row.labelBg, borderColor: "#999" }}
+                      className="border px-2 py-1 text-center whitespace-nowrap font-medium"
+                      style={{ backgroundColor: row.labelBg, borderColor: "#999", color: "#FFFFFF" }}
                     >
-                      {row.slot.replace("出", "")}
+                      {row.label}
                     </td>
                     {days.map((date) => {
                       const lines = cellFor(person.id, row.slot, date);
                       return (
                         <td
                           key={date}
-                          className="border px-2 py-1 align-top text-zinc-900"
-                          style={{ backgroundColor: row.cellBg, borderColor: "#999" }}
+                          className="border px-2 py-1 align-top"
+                          style={{ backgroundColor: row.cellBg, borderColor: "#999", color: INK }}
                         >
                           {lines.length > 0
                             ? lines.map((line, idx) => <div key={idx}>{line}</div>)
