@@ -23,3 +23,5 @@
 - 已部署到 Vercel：https://work-scheduling-system.vercel.app （使用者自行完成 GitHub/Vercel 連動與環境變數設定；已用瀏覽器確認登入頁正常運作、無錯誤）
 - Phase 2 完成：/admin/ability-summary 能力總表查詢頁（主管與排班人員皆可看，唯讀彩色標籤），導覽列同步更新
 - 下一步：Phase 3 訓練紀錄與升等核准
+- Phase 3 完成：/admin/training 訓練紀錄頁（主管專用）——登記受訓自動把能力調成二級，核准完訓自動調成三級並記錄核准人/時間
+- 下一步：Phase 4 可上班範圍登記（含半天班）
