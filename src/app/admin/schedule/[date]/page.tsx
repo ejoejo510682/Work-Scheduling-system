@@ -28,7 +28,7 @@ export default async function ScheduleDayPage({
     supabase.from("pt_staff").select("id, name").eq("is_active", true).order("name"),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
     supabase.from("pt_daily_availability").select("pt_id, range").eq("date", date),
-    supabase.from("daily_schedule").select("id, slot, position_id, pt_id").eq("date", date),
+    supabase.from("daily_schedule").select("id, slot, position_id, pt_id, priority").eq("date", date),
   ]);
 
   return (

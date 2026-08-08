@@ -12,7 +12,7 @@ type Headcount = { position_id: string; headcount: number };
 type Pt = { id: string; name: string };
 type Ability = { pt_id: string; position_id: string; level: number };
 type AvailabilityRow = { pt_id: string; range: string };
-type Assignment = { id: string; slot: string; position_id: string; pt_id: string };
+type Assignment = { id: string; slot: string; position_id: string; pt_id: string; priority: number };
 
 const HALVES: { label: string; slots: [Slot, Slot] }[] = [
   { label: "上午（整個半天）", slots: ["上午出訂單前", "上午出訂單後"] },
@@ -40,7 +40,7 @@ export function ScheduleDay({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [openPicker, setOpenPicker] = useState<string | null>(null); // key: slot:positionId or half:positionId
+  const [openPicker, setOpenPicker] = useState<string | null>(null);
 
   const slotsByPosition = new Map<string, Set<string>>();
   for (const row of slotMap) {
@@ -65,15 +65,15 @@ export function ScheduleDay({
     return levelByKey.get(`${ptId}:${positionId}`) ?? 1;
   }
 
-  async function assign(slot: string, positionId: string, ptId: string) {
+  async function assign(slot: string, positionId: string, ptId: string, priority: 1 | 2) {
     setBusy(true);
     const supabase = createClient();
     const { error } = await supabase
       .from("daily_schedule")
-      .insert({ date, slot, position_id: positionId, pt_id: ptId });
+      .insert({ date, slot, position_id: positionId, pt_id: ptId, priority });
     setBusy(false);
     if (error) {
-      alert(error.code === "23505" ? "這個人這個時段已經被排到別的崗位了" : error.message);
+      alert(error.code === "23505" ? "這個人這個時段已經被排過了" : error.message);
       return;
     }
     setOpenPicker(null);
@@ -93,7 +93,7 @@ export function ScheduleDay({
     const supabase = createClient();
     const { error } = await supabase
       .from("daily_schedule")
-      .insert(slots.map((slot) => ({ date, slot, position_id: positionId, pt_id: ptId })));
+      .insert(slots.map((slot) => ({ date, slot, position_id: positionId, pt_id: ptId, priority: 1 })));
     setBusy(false);
     if (error) {
       alert(error.code === "23505" ? "這個人這個時段已經被排到別的崗位了" : error.message);
@@ -111,15 +111,45 @@ export function ScheduleDay({
     router.refresh();
   }
 
-  function candidatesFor(slot: Slot, positionId: string): (Pt & { level: number })[] {
-    const busyThisSlot = new Set(
-      initialAssignments.filter((a) => a.slot === slot).map((a) => a.pt_id),
+  // 這個時段裡，誰已經有「第一任務」了（不分崗位）
+  function primaryAssigneesInSlot(slot: string): Map<string, string> {
+    const map = new Map<string, string>(); // pt_id -> position_id
+    for (const a of initialAssignments) {
+      if (a.slot === slot && a.priority === 1) map.set(a.pt_id, a.position_id);
+    }
+    return map;
+  }
+
+  function backupAssigneesInSlot(slot: string): Set<string> {
+    return new Set(
+      initialAssignments.filter((a) => a.slot === slot && a.priority === 2).map((a) => a.pt_id),
     );
+  }
+
+  function candidatesForPrimary(slot: Slot, positionId: string): (Pt & { level: number })[] {
+    const primary = primaryAssigneesInSlot(slot);
+    const backup = backupAssigneesInSlot(slot);
     return pt
       .filter((p) => {
         if (getLevel(p.id, positionId) < 2) return false;
         if (!isAvailableForSlot(getRange(p.id), slot)) return false;
-        if (busyThisSlot.has(p.id)) return false;
+        if (primary.has(p.id) || backup.has(p.id)) return false; // 這個時段已經有任務了
+        return true;
+      })
+      .map((p) => ({ ...p, level: getLevel(p.id, positionId) }))
+      .sort((a, b) => b.level - a.level);
+  }
+
+  // 備援候選：這個時段已經有「第一任務」、還沒有「第二任務」、且符合這個崗位資格的人
+  function candidatesForBackup(slot: Slot, positionId: string): (Pt & { level: number })[] {
+    const primary = primaryAssigneesInSlot(slot);
+    const backup = backupAssigneesInSlot(slot);
+    return pt
+      .filter((p) => {
+        if (!primary.has(p.id) || primary.get(p.id) === positionId) return false;
+        if (backup.has(p.id)) return false;
+        if (getLevel(p.id, positionId) < 2) return false;
+        if (!isAvailableForSlot(getRange(p.id), slot)) return false;
         return true;
       })
       .map((p) => ({ ...p, level: getLevel(p.id, positionId) }))
@@ -143,15 +173,17 @@ export function ScheduleDay({
 
   function CandidateList({
     candidates,
+    emptyText,
     onPick,
   }: {
     candidates: (Pt & { level: number })[];
+    emptyText: string;
     onPick: (ptId: string) => void;
   }) {
     if (candidates.length === 0) {
       return (
         <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-400">
-          ⚠ 人力缺口：目前沒有符合資格且有空的人選
+          {emptyText}
         </div>
       );
     }
@@ -168,6 +200,35 @@ export function ScheduleDay({
           </button>
         ))}
       </div>
+    );
+  }
+
+  function AssigneeChip({ assignment, slot }: { assignment: Assignment; slot: string }) {
+    const person = ptById.get(assignment.pt_id);
+    const conflict = !isAvailableForSlot(getRange(assignment.pt_id), slot as Slot);
+    const isBackup = assignment.priority === 2;
+    return (
+      <span
+        className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${
+          conflict
+            ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
+            : isBackup
+              ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300"
+              : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+        }`}
+      >
+        {conflict && "⚠ "}
+        {person?.name}
+        {isBackup && !conflict && "（備援）"}
+        {conflict && "（今天請假/半天）"}
+        <button
+          onClick={() => unassign(assignment.id)}
+          disabled={busy}
+          className="ml-1 text-zinc-500 hover:text-red-600 disabled:opacity-50"
+        >
+          ✕
+        </button>
+      </span>
     );
   }
 
@@ -188,7 +249,8 @@ export function ScheduleDay({
                 const assigned = initialAssignments.filter(
                   (a) => a.slot === slot && a.position_id === position.id,
                 );
-                const key = `${slot}:${position.id}`;
+                const primaryKey = `${slot}:${position.id}:primary`;
+                const backupKey = `${slot}:${position.id}:backup`;
                 const short = assigned.length < required;
 
                 return (
@@ -214,39 +276,18 @@ export function ScheduleDay({
                     </div>
 
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {assigned.map((a) => {
-                        const person = ptById.get(a.pt_id);
-                        const conflict = !isAvailableForSlot(getRange(a.pt_id), slot as Slot);
-                        return (
-                          <span
-                            key={a.id}
-                            className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${
-                              conflict
-                                ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
-                                : "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
-                            }`}
-                          >
-                            {conflict && "⚠ "}
-                            {person?.name}
-                            {conflict && "（今天請假/半天）"}
-                            <button
-                              onClick={() => unassign(a.id)}
-                              disabled={busy}
-                              className="ml-1 text-zinc-500 hover:text-red-600 disabled:opacity-50"
-                            >
-                              ✕
-                            </button>
-                          </span>
-                        );
-                      })}
+                      {assigned.map((a) => (
+                        <AssigneeChip key={a.id} assignment={a} slot={slot} />
+                      ))}
                     </div>
 
-                    <div className="mt-2">
-                      {openPicker === key ? (
-                        <div className="space-y-2">
+                    <div className="mt-2 flex flex-wrap items-center gap-3">
+                      {openPicker === primaryKey ? (
+                        <div className="w-full space-y-2">
                           <CandidateList
-                            candidates={candidatesFor(slot as Slot, position.id)}
-                            onPick={(ptId) => assign(slot, position.id, ptId)}
+                            candidates={candidatesForPrimary(slot as Slot, position.id)}
+                            emptyText="⚠ 人力缺口：目前沒有符合資格且有空的人選"
+                            onPick={(ptId) => assign(slot, position.id, ptId, 1)}
                           />
                           <button
                             onClick={() => setOpenPicker(null)}
@@ -257,10 +298,36 @@ export function ScheduleDay({
                         </div>
                       ) : (
                         <button
-                          onClick={() => setOpenPicker(key)}
+                          onClick={() => setOpenPicker(primaryKey)}
                           className="text-xs font-medium text-zinc-700 underline hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-50"
                         >
                           ＋ 新增人員
+                        </button>
+                      )}
+
+                      {openPicker === backupKey ? (
+                        <div className="w-full space-y-2">
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                            從這個時段已經有第一任務的人裡面，挑一個當這裡的備援：
+                          </p>
+                          <CandidateList
+                            candidates={candidatesForBackup(slot as Slot, position.id)}
+                            emptyText="目前沒有人可以當這個崗位的備援（需要這個時段已有第一任務、且符合能力/有空）"
+                            onPick={(ptId) => assign(slot, position.id, ptId, 2)}
+                          />
+                          <button
+                            onClick={() => setOpenPicker(null)}
+                            className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setOpenPicker(backupKey)}
+                          className="text-xs font-medium text-sky-700 underline hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200"
+                        >
+                          ＋ 新增備援（第二任務）
                         </button>
                       )}
                     </div>
@@ -341,6 +408,7 @@ export function ScheduleDay({
                             <div className="space-y-2">
                               <CandidateList
                                 candidates={candidatesForHalf(half.slots, position.id)}
+                                emptyText="⚠ 人力缺口：目前沒有符合資格且有空的人選"
                                 onPick={(ptId) => assignHalf(half.slots, position.id, ptId)}
                               />
                               <button
