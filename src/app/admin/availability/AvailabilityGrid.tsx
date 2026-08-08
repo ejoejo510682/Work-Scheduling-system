@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { addDays, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
 import { AVAILABILITY_RANGES, type AvailabilityRange } from "@/lib/constants";
@@ -24,6 +25,7 @@ export function AvailabilityGrid({
   pt: Pt[];
   initialAvailability: Availability[];
 }) {
+  const router = useRouter();
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
 
   const [ranges, setRanges] = useState<Map<string, AvailabilityRange>>(
@@ -38,12 +40,19 @@ export function AvailabilityGrid({
     setSavingKey(key);
 
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from("pt_daily_availability")
       .upsert({ pt_id: ptId, date, range }, { onConflict: "pt_id,date" });
 
-    setRanges((prev) => new Map(prev).set(key, range));
     setSavingKey(null);
+
+    if (error) {
+      alert(`儲存失敗：${error.message}`);
+      return;
+    }
+
+    setRanges((prev) => new Map(prev).set(key, range));
+    router.refresh();
   }
 
   if (pt.length === 0) {

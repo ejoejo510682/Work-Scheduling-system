@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ABILITY_LEVELS } from "@/lib/constants";
 
@@ -23,6 +24,7 @@ export function AbilitiesGrid({
   pt: Pt[];
   initialAbilities: Ability[];
 }) {
+  const router = useRouter();
   const [levels, setLevels] = useState<Map<string, number>>(
     new Map(initialAbilities.map((a) => [`${a.pt_id}:${a.position_id}`, a.level])),
   );
@@ -33,11 +35,18 @@ export function AbilitiesGrid({
     setSavingKey(key);
 
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from("pt_abilities")
       .upsert({ pt_id: ptId, position_id: positionId, level }, { onConflict: "pt_id,position_id" });
 
+    if (error) {
+      alert(`儲存失敗：${error.message}`);
+      setSavingKey(null);
+      return;
+    }
+
     setLevels((prev) => new Map(prev).set(key, level));
+    router.refresh();
     setSavingKey(null);
   }
 
