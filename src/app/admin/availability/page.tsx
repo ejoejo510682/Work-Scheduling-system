@@ -53,7 +53,12 @@ export default async function AvailabilityPage({
         </Link>
       </div>
 
-      <AvailabilityGrid monday={monday} pt={pt ?? []} initialAvailability={availability ?? []} />
+      <AvailabilityGrid
+        key={monday}
+        monday={monday}
+        pt={pt ?? []}
+        initialAvailability={availability ?? []}
+      />
     </div>
   );
 }
