@@ -21,3 +21,5 @@
   - 使用者已用真實帳密測試登入成功
 - 下一步：Phase 2 能力總表查詢頁（給主管與排班人員都能看的唯讀版本）
 - 已部署到 Vercel：https://work-scheduling-system.vercel.app （使用者自行完成 GitHub/Vercel 連動與環境變數設定；已用瀏覽器確認登入頁正常運作、無錯誤）
+- Phase 2 完成：/admin/ability-summary 能力總表查詢頁（主管與排班人員皆可看，唯讀彩色標籤），導覽列同步更新
+- 下一步：Phase 3 訓練紀錄與升等核准
