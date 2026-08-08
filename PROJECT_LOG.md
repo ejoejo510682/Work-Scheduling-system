@@ -45,3 +45,7 @@
   - 用瀏覽器內建的列印功能做 PDF 匯出（按「🖨 列印／匯出 PDF」開瀏覽器列印對話框，選「另存為 PDF」），不用額外套件，維持輕量
   - 列印時用 CSS 自動隱藏後台導覽列與操作按鈕，只留班表本身
 - 8 個 Phase（0～7）全部完成，規劃書列出的核心功能都已上線
+- 修正嚴重 bug：多個後台頁面（含本週追加任務、週排班表）會隨機出現 500「This page couldn't load」。用 Vercel Logs 查到真正原因：Supabase 登入 session 快過期時會在頁面渲染途中嘗試更新 cookie，但 Next.js 規定「一般頁面渲染中不能改 cookie」，就直接把整頁請求爆掉，不是特定頁面的問題，是所有頁面共用的登入機制有洞。修法兩步：
+  1. `lib/supabase/server.ts` 的 `setAll` 包 try/catch，被擋下時不要整頁當機
+  2. 新增 `src/proxy.ts`（這個 Next.js 版本把 `middleware.ts` 改名成 `proxy.ts`），在進 /admin 每個頁面前先幫 session 續期，從源頭大幅降低觸發機會
+  這是這台 Next.js 版本第一次真的踩到 AGENTS.md 警告的「跟你認知的 Next.js 不一樣」的地雷（middleware → proxy 改名）

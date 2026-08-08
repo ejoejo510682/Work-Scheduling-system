@@ -15,9 +15,14 @@ export async function createClient() {
           return cookieStore.getAll();
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options),
-          );
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options),
+            );
+          } catch {
+            // 在一般頁面渲染（非 Server Action / Route Handler）時會被擋下，
+            // 交給 middleware 續期，這裡忽略即可，不能讓它整頁當掉
+          }
         },
       },
     },
