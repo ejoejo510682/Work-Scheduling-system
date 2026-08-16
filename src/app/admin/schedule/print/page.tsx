@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
@@ -52,7 +51,7 @@ export default async function SchedulePrintPage({
   const supabase = await createClient();
   const [{ data: positions }, { data: pt }, { data: assignments }] = await Promise.all([
     supabase.from("positions").select("id, name").eq("is_active", true),
-    supabase.from("pt_staff").select("id, name").eq("is_active", true).order("name"),
+    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
     supabase
       .from("daily_schedule")
       .select("date, slot, position_id, pt_id, priority")
@@ -182,6 +181,16 @@ export default async function SchedulePrintPage({
                         }}
                       >
                         {person.name}
+                        <div
+                          style={{
+                            fontSize: 8,
+                            fontWeight: 500,
+                            marginTop: 2,
+                            color: person.employment_type === "正職" ? AMBER : STEEL_SOFT,
+                          }}
+                        >
+                          {person.employment_type}
+                        </div>
                       </td>
                     )}
                     {row.periodSpan > 0 && (

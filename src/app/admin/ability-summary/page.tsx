@@ -1,6 +1,7 @@
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
-import { ABILITY_LEVELS } from "@/lib/constants";
+import { ABILITY_LEVELS, type EmploymentType } from "@/lib/constants";
+import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
 const levelStyles: Record<number, string> = {
   1: "bg-zinc-100 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-500",
@@ -16,7 +17,7 @@ export default async function AbilitySummaryPage() {
   const supabase = await createClient();
   const [{ data: positions }, { data: pt }, { data: abilities }] = await Promise.all([
     supabase.from("positions").select("id, name").eq("is_active", true).order("sort_order"),
-    supabase.from("pt_staff").select("id, name").eq("is_active", true).order("name"),
+    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
   ]);
 
@@ -28,7 +29,7 @@ export default async function AbilitySummaryPage() {
     <div>
       <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">能力總表</h1>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        每位 PT 在各崗位上的能力等級（查詢用，如需調整請由主管到「能力等級設定」修改）。
+        每位人員在各崗位上的能力等級（查詢用，如需調整請由主管到「能力等級設定」修改）。
       </p>
 
       <div className="mt-3 flex flex-wrap gap-3">
@@ -43,13 +44,13 @@ export default async function AbilitySummaryPage() {
       </div>
 
       {!pt || pt.length === 0 ? (
-        <p className="mt-6 text-sm text-zinc-600 dark:text-zinc-400">還沒有 PT 資料。</p>
+        <p className="mt-6 text-sm text-zinc-600 dark:text-zinc-400">還沒有人員資料。</p>
       ) : (
         <div className="mt-6 overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
           <table className="text-sm">
             <thead className="bg-zinc-100 dark:bg-zinc-800">
               <tr>
-                <th className="sticky left-0 bg-zinc-100 px-3 py-2 text-left dark:bg-zinc-800">PT</th>
+                <th className="sticky left-0 bg-zinc-100 px-3 py-2 text-left dark:bg-zinc-800">人員</th>
                 {(positions ?? []).map((p) => (
                   <th key={p.id} className="px-3 py-2 text-left whitespace-nowrap">
                     {p.name}
@@ -61,7 +62,10 @@ export default async function AbilitySummaryPage() {
               {pt.map((person) => (
                 <tr key={person.id} className="border-t border-zinc-200 dark:border-zinc-800">
                   <td className="sticky left-0 bg-white px-3 py-2 font-medium text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50">
-                    {person.name}
+                    <span className="flex items-center gap-2">
+                      {person.name}
+                      <EmploymentTypeBadge type={person.employment_type as EmploymentType} />
+                    </span>
                   </td>
                   {(positions ?? []).map((p) => {
                     const level = levelByCell.get(`${person.id}:${p.id}`) ?? 1;

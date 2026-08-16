@@ -7,7 +7,7 @@ export default async function TrainingPage() {
 
   const supabase = await createClient();
   const [{ data: pt }, { data: trainingItems }, { data: records }] = await Promise.all([
-    supabase.from("pt_staff").select("id, name").eq("is_active", true).order("name"),
+    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
     supabase
       .from("training_items")
       .select("id, name, position_id, positions(name)")
@@ -15,7 +15,7 @@ export default async function TrainingPage() {
     supabase
       .from("training_records")
       .select(
-        "id, status, approved_at, note, pt_id, training_item_id, pt_staff(name), training_items(name, position_id)",
+        "id, status, approved_at, note, pt_id, training_item_id, pt_staff(name, employment_type), training_items(name, position_id)",
       )
       .order("id", { ascending: false }),
   ]);
@@ -50,6 +50,6 @@ export type TrainingRecordRow = {
   note: string | null;
   pt_id: string;
   training_item_id: string;
-  pt_staff: { name: string } | null;
+  pt_staff: { name: string; employment_type: "PT" | "正職" } | null;
   training_items: { name: string; position_id: string } | null;
 };

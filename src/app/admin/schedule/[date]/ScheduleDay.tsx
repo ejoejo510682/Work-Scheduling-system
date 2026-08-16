@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { SLOTS, type AvailabilityRange, type Slot } from "@/lib/constants";
+import { SLOTS, type AvailabilityRange, type Slot, type EmploymentType } from "@/lib/constants";
 import { isAvailableForSlot } from "@/lib/schedule";
+import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
 type Position = { id: string; name: string; sort_order: number };
 type SlotMapRow = { position_id: string; slot: string };
 type Headcount = { position_id: string; headcount: number };
-type Pt = { id: string; name: string };
+type Pt = { id: string; name: string; employment_type: EmploymentType };
 type Ability = { pt_id: string; position_id: string; level: number };
 type AvailabilityRow = { pt_id: string; range: string };
 type Assignment = { id: string; slot: string; position_id: string; pt_id: string; priority: number };
@@ -194,8 +195,9 @@ export function ScheduleDay({
             key={c.id}
             disabled={busy}
             onClick={() => onPick(c.id)}
-            className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className="flex items-center gap-1.5 rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
           >
+            <EmploymentTypeBadge type={c.employment_type} />
             {c.name}・{c.level === 3 ? "三級" : "二級（訓練中）"}
           </button>
         ))}
@@ -218,6 +220,7 @@ export function ScheduleDay({
         }`}
       >
         {conflict && "⚠ "}
+        {person && <EmploymentTypeBadge type={person.employment_type} />}
         {person?.name}
         {isBackup && !conflict && "（備援）"}
         {conflict && "（今天請假/半天）"}
@@ -390,6 +393,7 @@ export function ScheduleDay({
                                 }`}
                               >
                                 {conflict && "⚠ "}
+                                {person && <EmploymentTypeBadge type={person.employment_type} />}
                                 {person?.name}
                                 {conflict && "（今天請假/半天）"}
                                 <button

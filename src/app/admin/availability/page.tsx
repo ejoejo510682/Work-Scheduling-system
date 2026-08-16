@@ -17,7 +17,7 @@ export default async function AvailabilityPage({
 
   const supabase = await createClient();
   const [{ data: pt }, { data: availability }] = await Promise.all([
-    supabase.from("pt_staff").select("id, name").eq("is_active", true).order("name"),
+    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
     supabase
       .from("pt_daily_availability")
       .select("pt_id, date, range")

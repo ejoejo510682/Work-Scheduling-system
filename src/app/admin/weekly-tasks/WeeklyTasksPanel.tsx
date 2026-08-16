@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import type { EmploymentType } from "@/lib/constants";
+import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
 type Position = { id: string; name: string };
-type Pt = { id: string; name: string };
+type Pt = { id: string; name: string; employment_type: EmploymentType };
 type Task = {
   id: string;
   name: string;
@@ -263,8 +265,11 @@ export function WeeklyTasksPanel({
                 {assigned.map((a) => (
                   <span
                     key={a.id}
-                    className="flex items-center gap-1 rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
+                    className="flex items-center gap-1.5 rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200"
                   >
+                    {ptById.get(a.pt_id) && (
+                      <EmploymentTypeBadge type={ptById.get(a.pt_id)!.employment_type} />
+                    )}
                     {ptById.get(a.pt_id)?.name}
                     <button
                       onClick={() => unassign(a.id)}
@@ -286,8 +291,9 @@ export function WeeklyTasksPanel({
                           key={c.id}
                           disabled={busy}
                           onClick={() => assignPt(task.id, c.id)}
-                          className="rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                          className="flex items-center gap-1.5 rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
                         >
+                          <EmploymentTypeBadge type={c.employment_type} />
                           {c.name}
                         </button>
                       ))}

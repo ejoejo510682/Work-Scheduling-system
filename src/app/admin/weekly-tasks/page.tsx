@@ -20,7 +20,7 @@ export default async function WeeklyTasksPage({
   const [{ data: positions }, { data: pt }, { data: abilities }, { data: tasks }, { data: assignments }] =
     await Promise.all([
       supabase.from("positions").select("id, name").eq("is_active", true).order("sort_order"),
-      supabase.from("pt_staff").select("id, name").eq("is_active", true).order("name"),
+      supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
       supabase.from("pt_abilities").select("pt_id, position_id, level"),
       supabase
         .from("weekly_tasks")

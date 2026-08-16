@@ -124,7 +124,7 @@ PT 離職：用「停用」而非直接刪除，保留過去班表紀錄；停�
 > 完整欄位以 Supabase migration 檔為準，此處列出設計重點。
 
 1. **positions**（崗位）— id / name / is_active / sort_order
-2. **pt_staff**（PT 人員）— id / name / is_active
+2. **pt_staff**（人員，含 PT 與協助出貨的正職）— id / name / is_active / employment_type（PT／正職）
 3. **pt_abilities**（PT 能力對照）— id / pt_id (FK) / position_id (FK) / level (1/2/3)
 4. **training_items**（訓練項目清單）— id / position_id (FK) / name
 5. **training_records**（訓練紀錄）— id / pt_id (FK) / training_item_id (FK) / status（進行中/已完成）/ approved_by / approved_at / note
@@ -142,6 +142,7 @@ PT 離職：用「停用」而非直接刪除，保留過去班表紀錄；停�
 - **每日可上班範圍**：單一欄位涵蓋半天班／臨時半天請假／整天請假，不做成三張分開的表。
 - **同時段防重複指派**：由後端 API 在寫入 daily_schedule 時擋下（同一 date + slot + pt_id 只能對應一個 position_id）。
 - **PT 停用不刪除**：`pt_staff.is_active`，離職 PT 保留歷史班表紀錄。
+- **正職共用同一張人員表**：不另建表格，正職跟 PT 一樣可以設定能力等級、可上班範圍、排進班表，用 `employment_type` 區分，UI 上用「PT」「正職」標籤標示。
 
 ## 六、頁面規劃
 

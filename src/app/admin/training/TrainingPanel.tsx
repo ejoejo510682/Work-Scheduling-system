@@ -4,8 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { TrainingItemRow, TrainingRecordRow } from "./page";
+import type { EmploymentType } from "@/lib/constants";
+import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
-type Pt = { id: string; name: string };
+type Pt = { id: string; name: string; employment_type: EmploymentType };
 
 const statusStyles: Record<string, string> = {
   進行中: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
@@ -101,7 +103,7 @@ export function TrainingPanel({
         className="flex max-w-xl flex-wrap items-end gap-3 rounded border border-zinc-200 p-4 dark:border-zinc-800"
       >
         <div>
-          <label className="mb-1 block text-sm text-zinc-700 dark:text-zinc-300">PT</label>
+          <label className="mb-1 block text-sm text-zinc-700 dark:text-zinc-300">人員</label>
           <select
             value={ptId}
             onChange={(e) => setPtId(e.target.value)}
@@ -109,7 +111,7 @@ export function TrainingPanel({
           >
             {pt.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {p.name}（{p.employment_type}）
               </option>
             ))}
           </select>
@@ -145,7 +147,7 @@ export function TrainingPanel({
         <table className="w-full text-sm">
           <thead className="bg-zinc-100 text-left dark:bg-zinc-800">
             <tr>
-              <th className="px-3 py-2">PT</th>
+              <th className="px-3 py-2">人員</th>
               <th className="px-3 py-2">訓練項目</th>
               <th className="px-3 py-2">狀態</th>
               <th className="px-3 py-2">核准時間</th>
@@ -163,7 +165,10 @@ export function TrainingPanel({
             {initialRecords.map((r) => (
               <tr key={r.id} className="border-t border-zinc-200 dark:border-zinc-800">
                 <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-50">
-                  {r.pt_staff?.name}
+                  <span className="flex items-center gap-2">
+                    {r.pt_staff && <EmploymentTypeBadge type={r.pt_staff.employment_type} />}
+                    {r.pt_staff?.name}
+                  </span>
                 </td>
                 <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">{r.training_items?.name}</td>
                 <td className="px-3 py-2">

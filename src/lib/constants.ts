@@ -17,3 +17,7 @@ export const ABILITY_LEVELS = [
   { value: 2, label: "二級・訓練中" },
   { value: 3, label: "三級・可獨立執行" },
 ] as const;
+
+export const EMPLOYMENT_TYPES = ["PT", "正職"] as const;
+
+export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];

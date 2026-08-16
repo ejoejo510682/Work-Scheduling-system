@@ -18,7 +18,7 @@ export default async function AdminLayout({
     ...(adminUser.role === "主管"
       ? [
           { href: "/admin/positions", label: "崗位管理" },
-          { href: "/admin/pt", label: "PT 名單" },
+          { href: "/admin/pt", label: "人員名單" },
           { href: "/admin/abilities", label: "能力等級設定" },
           { href: "/admin/training", label: "訓練紀錄" },
         ]

@@ -4,9 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { addDays, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
-import { AVAILABILITY_RANGES, type AvailabilityRange } from "@/lib/constants";
+import { AVAILABILITY_RANGES, type AvailabilityRange, type EmploymentType } from "@/lib/constants";
+import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
-type Pt = { id: string; name: string };
+type Pt = { id: string; name: string; employment_type: EmploymentType };
 type Availability = { pt_id: string; date: string; range: string };
 
 const rangeStyles: Record<string, string> = {
@@ -56,7 +57,7 @@ export function AvailabilityGrid({
   }
 
   if (pt.length === 0) {
-    return <p className="mt-6 text-sm text-zinc-600 dark:text-zinc-400">還沒有 PT 資料。</p>;
+    return <p className="mt-6 text-sm text-zinc-600 dark:text-zinc-400">還沒有人員資料。</p>;
   }
 
   return (
@@ -64,7 +65,7 @@ export function AvailabilityGrid({
       <table className="text-sm">
         <thead className="bg-zinc-100 dark:bg-zinc-800">
           <tr>
-            <th className="sticky left-0 bg-zinc-100 px-3 py-2 text-left dark:bg-zinc-800">PT</th>
+            <th className="sticky left-0 bg-zinc-100 px-3 py-2 text-left dark:bg-zinc-800">人員</th>
             {days.map((date, i) => (
               <th key={date} className="px-3 py-2 text-left whitespace-nowrap">
                 週{WEEKDAY_LABELS[i]} {formatDateLabel(date)}
@@ -76,7 +77,10 @@ export function AvailabilityGrid({
           {pt.map((person) => (
             <tr key={person.id} className="border-t border-zinc-200 dark:border-zinc-800">
               <td className="sticky left-0 bg-white px-3 py-2 font-medium text-zinc-900 dark:bg-zinc-900 dark:text-zinc-50">
-                {person.name}
+                <span className="flex items-center gap-2">
+                  {person.name}
+                  <EmploymentTypeBadge type={person.employment_type} />
+                </span>
               </td>
               {days.map((date) => {
                 const key = `${person.id}:${date}`;
