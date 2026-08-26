@@ -1,5 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { getSubmissionWindow, toDateStr, formatDateLabel } from "@/lib/date";
+import { getSubmissionWindow, todayInTaipei, formatDateLabel } from "@/lib/date";
 import { MyAvailabilityForm } from "./MyAvailabilityForm";
 
 // 這頁沒有用到 cookies()/searchParams，Next.js 預設可能會把它當成靜態頁在 build 時就固定住，
@@ -7,7 +7,7 @@ import { MyAvailabilityForm } from "./MyAvailabilityForm";
 export const dynamic = "force-dynamic";
 
 export default async function MyAvailabilityPage() {
-  const window = getSubmissionWindow(toDateStr(new Date()));
+  const window = getSubmissionWindow(todayInTaipei());
 
   const supabase = createServiceRoleClient();
   const { data: pt } = await supabase

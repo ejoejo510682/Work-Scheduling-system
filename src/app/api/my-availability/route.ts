@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import { getSubmissionWindow, toDateStr } from "@/lib/date";
+import { getSubmissionWindow, todayInTaipei } from "@/lib/date";
 import { AVAILABILITY_RANGES, type AvailabilityRange } from "@/lib/constants";
 
 type Entry = { date: string; range: AvailabilityRange };
@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   }
 
   // 前端的「現在開不開放」只是體驗，這裡才是真正把關的地方
-  const window = getSubmissionWindow(toDateStr(new Date()));
+  const window = getSubmissionWindow(todayInTaipei());
   if (!window.open) {
     return NextResponse.json({ error: "目前不在開放填寫的時間內" }, { status: 403 });
   }

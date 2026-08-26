@@ -38,6 +38,12 @@ export function formatDateLabel(dateStr: string): string {
 
 export const WEEKDAY_LABELS = ["一", "二", "三", "四", "五", "六", "日"];
 
+// 部署到 Vercel 的伺服器時區不一定是台灣時間，「今天幾號」這種要準確卡到午夜的判斷
+// 不能直接信 new Date() 的本地時間，明確指定 Asia/Taipei 才不會差到 8 小時
+export function todayInTaipei(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+}
+
 // 某天所在「下個月」的完整日期清單
 export function getNextMonthDates(todayDateStr: string): string[] {
   const [y, m] = todayDateStr.split("-").map(Number);
@@ -58,6 +64,18 @@ export type SubmissionWindow = {
 // PT 自助填寫下個月可上班日期：每個月 1~20 號開放修正，20 號一過就鎖住，
 // 留 21 號到月底這段時間給排班人員拿確定的資料去準備下個月的班表
 export function getSubmissionWindow(todayDateStr: string): SubmissionWindow {
+  // 一次性例外：2026/8 這個月已經過了 20 號才上線這個機制，臨時把截止日延到 8/29，
+  // 讓大家先把 9 月的班表補填完；9 月開始就恢復正常的「每月 1~20 號」規則，
+  // 這個 if 之後不會再符合，屆時可以直接刪掉
+  if (todayDateStr >= "2026-08-21" && todayDateStr <= "2026-08-29") {
+    return {
+      open: true,
+      opensAt: "2026-08-21",
+      closesAt: "2026-08-29",
+      targetMonthDates: getNextMonthDates(todayDateStr),
+    };
+  }
+
   const [y, m, d] = todayDateStr.split("-").map(Number);
 
   if (d <= 20) {
