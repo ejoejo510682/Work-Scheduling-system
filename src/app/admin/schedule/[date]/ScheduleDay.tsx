@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { SLOTS, type AvailabilityRange, type Slot, type EmploymentType } from "@/lib/constants";
+import { SLOTS, MAX_DAYS_PER_WEEK, type AvailabilityRange, type Slot, type EmploymentType } from "@/lib/constants";
 import { isAvailableForSlot } from "@/lib/schedule";
 import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
@@ -14,6 +14,7 @@ type Pt = { id: string; name: string; employment_type: EmploymentType };
 type Ability = { pt_id: string; position_id: string; level: number };
 type AvailabilityRow = { pt_id: string; range: string };
 type Assignment = { id: string; slot: string; position_id: string; pt_id: string; priority: number };
+type WeekAssignment = { date: string; pt_id: string };
 
 const HALVES: { label: string; slots: [Slot, Slot] }[] = [
   { label: "上午（整個半天）", slots: ["上午出訂單前", "上午出訂單後"] },
@@ -29,6 +30,7 @@ export function ScheduleDay({
   abilities,
   availability,
   initialAssignments,
+  weekAssignments,
 }: {
   date: string;
   positions: Position[];
@@ -38,6 +40,7 @@ export function ScheduleDay({
   abilities: Ability[];
   availability: AvailabilityRow[];
   initialAssignments: Assignment[];
+  weekAssignments: WeekAssignment[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -54,6 +57,17 @@ export function ScheduleDay({
   const levelByKey = new Map(abilities.map((a) => [`${a.pt_id}:${a.position_id}`, a.level]));
   const availabilityByPt = new Map(availability.map((a) => [a.pt_id, a.range as AvailabilityRange]));
   const ptById = new Map(pt.map((p) => [p.id, p]));
+
+  // 一週上限 4 天的警示：算「這個人這週已經有排班的日期數」，同一天排多個時段/崗位只算一天
+  const datesByPt = new Map<string, Set<string>>();
+  for (const a of weekAssignments) {
+    const set = datesByPt.get(a.pt_id) ?? new Set<string>();
+    set.add(a.date);
+    datesByPt.set(a.pt_id, set);
+  }
+  function daysWorkedThisWeek(ptId: string): number {
+    return datesByPt.get(ptId)?.size ?? 0;
+  }
 
   const regularPositions = positions.filter((p) => (slotsByPosition.get(p.id)?.size ?? 0) > 0);
   const flexiblePositions = positions.filter((p) => (slotsByPosition.get(p.id)?.size ?? 0) === 0);
@@ -190,17 +204,32 @@ export function ScheduleDay({
     }
     return (
       <div className="flex flex-wrap gap-2">
-        {candidates.map((c) => (
-          <button
-            key={c.id}
-            disabled={busy}
-            onClick={() => onPick(c.id)}
-            className="flex items-center gap-1.5 rounded border border-zinc-300 px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-          >
-            <EmploymentTypeBadge type={c.employment_type} />
-            {c.name}・{c.level === 3 ? "三級" : "二級（訓練中）"}
-          </button>
-        ))}
+        {candidates.map((c) => {
+          const days = daysWorkedThisWeek(c.id);
+          const overLimit = days >= MAX_DAYS_PER_WEEK;
+          return (
+            <button
+              key={c.id}
+              disabled={busy}
+              onClick={() => onPick(c.id)}
+              className={`flex items-center gap-1.5 rounded border px-2 py-1 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-800 ${
+                overLimit ? "border-red-300 dark:border-red-800" : "border-zinc-300 dark:border-zinc-700"
+              }`}
+            >
+              <EmploymentTypeBadge type={c.employment_type} />
+              {c.name}・{c.level === 3 ? "三級" : "二級（訓練中）"}
+              <span
+                className={
+                  overLimit
+                    ? "font-bold text-red-600 dark:text-red-400"
+                    : "text-zinc-400 dark:text-zinc-500"
+                }
+              >
+                {overLimit && "⚠ "}已排{days}天
+              </span>
+            </button>
+          );
+        })}
       </div>
     );
   }
@@ -209,6 +238,8 @@ export function ScheduleDay({
     const person = ptById.get(assignment.pt_id);
     const conflict = !isAvailableForSlot(getRange(assignment.pt_id), slot as Slot);
     const isBackup = assignment.priority === 2;
+    const days = daysWorkedThisWeek(assignment.pt_id);
+    const overLimit = days >= MAX_DAYS_PER_WEEK;
     return (
       <span
         className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${
@@ -224,6 +255,9 @@ export function ScheduleDay({
         {person?.name}
         {isBackup && !conflict && "（備援）"}
         {conflict && "（今天請假/半天）"}
+        <span className={overLimit ? "font-bold text-red-600 dark:text-red-400" : "opacity-60"}>
+          {overLimit && "⚠"}・已排{days}天
+        </span>
         <button
           onClick={() => unassign(assignment.id)}
           disabled={busy}
@@ -383,6 +417,8 @@ export function ScheduleDay({
                             const conflict = !half.slots.every((s) =>
                               isAvailableForSlot(getRange(ptId), s),
                             );
+                            const days = daysWorkedThisWeek(ptId);
+                            const overLimit = days >= MAX_DAYS_PER_WEEK;
                             return (
                               <span
                                 key={ptId}
@@ -396,6 +432,9 @@ export function ScheduleDay({
                                 {person && <EmploymentTypeBadge type={person.employment_type} />}
                                 {person?.name}
                                 {conflict && "（今天請假/半天）"}
+                                <span className={overLimit ? "font-bold text-red-600 dark:text-red-400" : "opacity-60"}>
+                                  {overLimit && "⚠"}・已排{days}天
+                                </span>
                                 <button
                                   onClick={() => unassignHalf(ids)}
                                   disabled={busy}

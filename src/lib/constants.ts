@@ -21,3 +21,6 @@ export const ABILITY_LEVELS = [
 export const EMPLOYMENT_TYPES = ["PT", "正職"] as const;
 
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
+
+// 排班時的提醒門檻：一個人一週上班超過這個天數就顯示警示（不是硬性擋下，排班人員可以自己判斷）
+export const MAX_DAYS_PER_WEEK = 4;

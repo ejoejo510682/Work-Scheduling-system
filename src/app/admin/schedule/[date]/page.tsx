@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
-import { getMonday } from "@/lib/date";
+import { addDays, getMonday } from "@/lib/date";
 import { ScheduleDay } from "./ScheduleDay";
 
 export default async function ScheduleDayPage({
@@ -12,6 +12,9 @@ export default async function ScheduleDayPage({
   await requireRole(["主管", "排班人員"]);
   const { date } = await params;
 
+  const monday = getMonday(date);
+  const sunday = addDays(monday, 6);
+
   const supabase = await createClient();
   const [
     { data: positions },
@@ -21,6 +24,7 @@ export default async function ScheduleDayPage({
     { data: abilities },
     { data: availability },
     { data: assignments },
+    { data: weekAssignments },
   ] = await Promise.all([
     supabase.from("positions").select("id, name, sort_order").eq("is_active", true).order("sort_order"),
     supabase.from("position_slot_map").select("position_id, slot"),
@@ -29,6 +33,8 @@ export default async function ScheduleDayPage({
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
     supabase.from("pt_daily_availability").select("pt_id, range").eq("date", date),
     supabase.from("daily_schedule").select("id, slot, position_id, pt_id, priority").eq("date", date),
+    // 用來算「這個人這週已經排幾天班」，一週上限 4 天的警示要看整週，不能只看今天
+    supabase.from("daily_schedule").select("date, pt_id").gte("date", monday).lte("date", sunday),
   ]);
 
   return (
@@ -52,6 +58,7 @@ export default async function ScheduleDayPage({
         abilities={abilities ?? []}
         availability={availability ?? []}
         initialAssignments={assignments ?? []}
+        weekAssignments={weekAssignments ?? []}
       />
     </div>
   );
