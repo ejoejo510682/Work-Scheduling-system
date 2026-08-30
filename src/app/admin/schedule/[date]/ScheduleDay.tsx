@@ -205,8 +205,9 @@ export function ScheduleDay({
     return (
       <div className="flex flex-wrap gap-2">
         {candidates.map((c) => {
+          const isPt = c.employment_type === "PT"; // 一週上限 4 天只管 PT，正職不受這個規則限制
           const days = daysWorkedThisWeek(c.id);
-          const overLimit = days >= MAX_DAYS_PER_WEEK;
+          const overLimit = isPt && days >= MAX_DAYS_PER_WEEK;
           return (
             <button
               key={c.id}
@@ -218,15 +219,17 @@ export function ScheduleDay({
             >
               <EmploymentTypeBadge type={c.employment_type} />
               {c.name}・{c.level === 3 ? "三級" : "二級（訓練中）"}
-              <span
-                className={
-                  overLimit
-                    ? "font-bold text-red-600 dark:text-red-400"
-                    : "text-zinc-400 dark:text-zinc-500"
-                }
-              >
-                {overLimit && "⚠ "}已排{days}天
-              </span>
+              {isPt && (
+                <span
+                  className={
+                    overLimit
+                      ? "font-bold text-red-600 dark:text-red-400"
+                      : "text-zinc-400 dark:text-zinc-500"
+                  }
+                >
+                  {overLimit && "⚠ "}已排{days}天
+                </span>
+              )}
             </button>
           );
         })}
@@ -238,8 +241,9 @@ export function ScheduleDay({
     const person = ptById.get(assignment.pt_id);
     const conflict = !isAvailableForSlot(getRange(assignment.pt_id), slot as Slot);
     const isBackup = assignment.priority === 2;
+    const isPt = person?.employment_type === "PT"; // 一週上限 4 天只管 PT，正職不受這個規則限制
     const days = daysWorkedThisWeek(assignment.pt_id);
-    const overLimit = days >= MAX_DAYS_PER_WEEK;
+    const overLimit = isPt && days >= MAX_DAYS_PER_WEEK;
     return (
       <span
         className={`flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${
@@ -255,9 +259,11 @@ export function ScheduleDay({
         {person?.name}
         {isBackup && !conflict && "（備援）"}
         {conflict && "（今天請假/半天）"}
-        <span className={overLimit ? "font-bold text-red-600 dark:text-red-400" : "opacity-60"}>
-          {overLimit && "⚠"}・已排{days}天
-        </span>
+        {isPt && (
+          <span className={overLimit ? "font-bold text-red-600 dark:text-red-400" : "opacity-60"}>
+            {overLimit && "⚠"}・已排{days}天
+          </span>
+        )}
         <button
           onClick={() => unassign(assignment.id)}
           disabled={busy}
@@ -417,8 +423,9 @@ export function ScheduleDay({
                             const conflict = !half.slots.every((s) =>
                               isAvailableForSlot(getRange(ptId), s),
                             );
+                            const isPt = person?.employment_type === "PT"; // 一週上限 4 天只管 PT，正職不受這個規則限制
                             const days = daysWorkedThisWeek(ptId);
-                            const overLimit = days >= MAX_DAYS_PER_WEEK;
+                            const overLimit = isPt && days >= MAX_DAYS_PER_WEEK;
                             return (
                               <span
                                 key={ptId}
@@ -432,9 +439,11 @@ export function ScheduleDay({
                                 {person && <EmploymentTypeBadge type={person.employment_type} />}
                                 {person?.name}
                                 {conflict && "（今天請假/半天）"}
-                                <span className={overLimit ? "font-bold text-red-600 dark:text-red-400" : "opacity-60"}>
-                                  {overLimit && "⚠"}・已排{days}天
-                                </span>
+                                {isPt && (
+                                  <span className={overLimit ? "font-bold text-red-600 dark:text-red-400" : "opacity-60"}>
+                                    {overLimit && "⚠"}・已排{days}天
+                                  </span>
+                                )}
                                 <button
                                   onClick={() => unassignHalf(ids)}
                                   disabled={busy}
