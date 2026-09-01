@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
-import { addDays, getMonday } from "@/lib/date";
+import { addDays, getMonday, WEEKDAY_LABELS } from "@/lib/date";
 import { ScheduleDay } from "./ScheduleDay";
 
 export default async function ScheduleDayPage({
@@ -14,6 +14,10 @@ export default async function ScheduleDayPage({
 
   const monday = getMonday(date);
   const sunday = addDays(monday, 6);
+  const prevDate = addDays(date, -1);
+  const nextDate = addDays(date, 1);
+  const [y, m, d] = date.split("-").map(Number);
+  const weekdayLabel = WEEKDAY_LABELS[(new Date(y, m - 1, d).getDay() + 6) % 7];
 
   const supabase = await createClient();
   const [
@@ -41,13 +45,29 @@ export default async function ScheduleDayPage({
     <div>
       <div className="flex items-center gap-3">
         <Link
-          href={`/admin/schedule?week=${getMonday(date)}`}
+          href={`/admin/schedule?week=${monday}`}
           className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-50"
         >
           ← 回到週總覽
         </Link>
       </div>
-      <h1 className="mt-2 text-lg font-bold text-zinc-900 dark:text-zinc-50">{date} 排班</h1>
+      <div className="mt-2 flex items-center gap-3">
+        <Link
+          href={`/admin/schedule/${prevDate}`}
+          className="rounded border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        >
+          ← 前一天
+        </Link>
+        <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
+          {date}（週{weekdayLabel}）排班
+        </h1>
+        <Link
+          href={`/admin/schedule/${nextDate}`}
+          className="rounded border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        >
+          後一天 →
+        </Link>
+      </div>
 
       <ScheduleDay
         date={date}
