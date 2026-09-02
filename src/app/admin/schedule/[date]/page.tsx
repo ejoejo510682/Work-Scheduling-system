@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, getMonday, WEEKDAY_LABELS } from "@/lib/date";
+import { ecommerceCampaignLabel } from "@/lib/specialDates";
 import { ScheduleDay } from "./ScheduleDay";
 
 export default async function ScheduleDayPage({
@@ -29,6 +30,7 @@ export default async function ScheduleDayPage({
     { data: availability },
     { data: assignments },
     { data: weekAssignments },
+    { data: specialDates },
   ] = await Promise.all([
     supabase.from("positions").select("id, name, sort_order").eq("is_active", true).order("sort_order"),
     supabase.from("position_slot_map").select("position_id, slot"),
@@ -39,7 +41,11 @@ export default async function ScheduleDayPage({
     supabase.from("daily_schedule").select("id, slot, position_id, pt_id, priority").eq("date", date),
     // 用來算「這個人這週已經排幾天班」，一週上限 4 天的警示要看整週，不能只看今天
     supabase.from("daily_schedule").select("date, pt_id").gte("date", monday).lte("date", sunday),
+    supabase.from("special_dates").select("name, type").eq("date", date),
   ]);
+
+  const campaignLabel = ecommerceCampaignLabel(date);
+  const hasReminder = (specialDates ?? []).length > 0 || campaignLabel;
 
   return (
     <div>
@@ -68,6 +74,29 @@ export default async function ScheduleDayPage({
           後一天 →
         </Link>
       </div>
+
+      {hasReminder && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-800 dark:bg-amber-950">
+          <span className="font-medium text-amber-800 dark:text-amber-300">今天提醒：</span>
+          {(specialDates ?? []).map((sd) => (
+            <span
+              key={sd.name}
+              className={`rounded px-2 py-0.5 text-xs font-medium ${
+                sd.type === "國定假日"
+                  ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
+                  : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"
+              }`}
+            >
+              {sd.name}
+            </span>
+          ))}
+          {campaignLabel && (
+            <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-300">
+              {campaignLabel}
+            </span>
+          )}
+        </div>
+      )}
 
       <ScheduleDay
         date={date}

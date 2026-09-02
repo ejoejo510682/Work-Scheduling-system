@@ -135,6 +135,7 @@ PT 離職：用「停用」而非直接刪除，保留過去班表紀錄；停�
 10. **weekly_tasks**（本週追加任務）— id / week_start / name / note / required_position_id (nullable FK) / required_level (nullable) / status / created_by
 11. **weekly_task_assignments**（追加任務指派）— id / task_id (FK) / pt_id (FK) / assigned_by
 12. **admin_users**（後台帳號）— id (對應 Supabase Auth) / email / name / role（主管/排班人員）
+13. **special_dates**（國定假日／自訂電商檔期）— id / date / type（國定假日/電商檔期）/ name / note
 
 ### 關鍵設計決策
 
@@ -143,11 +144,12 @@ PT 離職：用「停用」而非直接刪除，保留過去班表紀錄；停�
 - **同時段防重複指派**：由後端 API 在寫入 daily_schedule 時擋下（同一 date + slot + pt_id 只能對應一個 position_id）。
 - **PT 停用不刪除**：`pt_staff.is_active`，離職 PT 保留歷史班表紀錄。
 - **正職共用同一張人員表**：不另建表格，正職跟 PT 一樣可以設定能力等級、可上班範圍、排進班表，用 `employment_type` 區分，UI 上用「PT」「正職」標籤標示。
+- **電商檔期不進資料庫**：「每月雙字日／18號／25號」是固定重複的規律，用 `src/lib/specialDates.ts` 的純函式直接算，不用每年維護。`special_dates` 表只放國定假日（每年會變）跟規律以外的自訂檔期。
 
 ## 六、頁面規劃
 
 **共用**：登入頁・首頁今日總覽・能力總表・班表查詢／列印／匯出 PDF
-**排班操作**：週排班總覽頁（含建議名單、臨時異動快速替補）・可上班範圍登記頁・追加任務指派頁
+**排班操作**：週排班總覽頁（含建議名單、臨時異動快速替補、假日/檔期提醒）・可上班範圍登記頁・追加任務指派頁・假日與檔期管理頁
 **主管專用**：PT 與能力管理・訓練紀錄管理・崗位與人力需求設定・本週追加任務建立・帳號管理
 **對外公開（不用登入）**：`/my-availability`——PT／正職自助填寫下個月可上班日期，每個月 1～20 號開放修改，20 號後鎖住，留時間給排班人員準備下個月班表
 
