@@ -22,6 +22,7 @@ export default async function AdminLayout({
           { href: "/admin/pt", label: "人員名單" },
           { href: "/admin/abilities", label: "能力等級設定" },
           { href: "/admin/training", label: "訓練紀錄" },
+          { href: "/admin/accounts", label: "帳號管理" },
         ]
       : []),
   ];
