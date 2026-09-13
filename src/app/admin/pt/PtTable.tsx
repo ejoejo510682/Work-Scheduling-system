@@ -21,6 +21,10 @@ export function PtTable({ initialPt }: { initialPt: Pt[] }) {
   const [error, setError] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
 
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
@@ -47,6 +51,37 @@ export function PtTable({ initialPt }: { initialPt: Pt[] }) {
   async function toggleActive(pt: Pt) {
     const supabase = createClient();
     await supabase.from("pt_staff").update({ is_active: !pt.is_active }).eq("id", pt.id);
+    router.refresh();
+  }
+
+  function startEditing(pt: Pt) {
+    setEditingId(pt.id);
+    setEditingName(pt.name);
+    setRenameError(null);
+  }
+
+  async function saveRename(pt: Pt) {
+    const trimmed = editingName.trim();
+    if (!trimmed || trimmed === pt.name) {
+      setEditingId(null);
+      return;
+    }
+    setSaving(true);
+    setRenameError(null);
+    const supabase = createClient();
+
+    const { error: renameError } = await supabase
+      .from("pt_staff")
+      .update({ name: trimmed })
+      .eq("id", pt.id);
+
+    setSaving(false);
+    if (renameError) {
+      setRenameError(renameError.message);
+      return;
+    }
+
+    setEditingId(null);
     router.refresh();
   }
 
@@ -80,10 +115,46 @@ export function PtTable({ initialPt }: { initialPt: Pt[] }) {
             {initialPt.map((pt) => (
               <tr key={pt.id} className="border-t border-zinc-200 dark:border-zinc-800">
                 <td className="px-3 py-2 font-medium text-zinc-900 dark:text-zinc-50">
-                  <span className="flex items-center gap-2">
-                    {pt.name}
-                    <EmploymentTypeBadge type={pt.employment_type} />
-                  </span>
+                  {editingId === pt.id ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        autoFocus
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") saveRename(pt);
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                        className="w-32 rounded border border-zinc-300 px-2 py-1 text-sm font-normal text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
+                      />
+                      <button
+                        onClick={() => saveRename(pt)}
+                        disabled={saving}
+                        className="text-xs font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-50 dark:text-emerald-400"
+                      >
+                        儲存
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        disabled={saving}
+                        className="text-xs text-zinc-500 hover:text-zinc-700 disabled:opacity-50 dark:hover:text-zinc-300"
+                      >
+                        取消
+                      </button>
+                      {renameError && <p className="text-xs text-red-600 dark:text-red-400">{renameError}</p>}
+                    </div>
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      {pt.name}
+                      <EmploymentTypeBadge type={pt.employment_type} />
+                      <button
+                        onClick={() => startEditing(pt)}
+                        className="text-xs font-normal text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                      >
+                        編輯
+                      </button>
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <select
