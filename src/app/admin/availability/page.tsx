@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, getDefaultWeekMonday, getMonday } from "@/lib/date";
+import { getCachedActivePt } from "@/lib/cachedReferenceData";
 import { AvailabilityGrid } from "./AvailabilityGrid";
 
 export default async function AvailabilityPage({
@@ -16,8 +17,8 @@ export default async function AvailabilityPage({
   const sunday = addDays(monday, 6);
 
   const supabase = await createClient();
-  const [{ data: pt }, { data: availability }] = await Promise.all([
-    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
+  const [pt, { data: availability }] = await Promise.all([
+    getCachedActivePt(),
     supabase
       .from("pt_daily_availability")
       .select("pt_id, date, range")

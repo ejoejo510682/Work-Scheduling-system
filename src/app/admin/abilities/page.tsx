@@ -1,14 +1,15 @@
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
+import { getCachedActivePositions, getCachedActivePt } from "@/lib/cachedReferenceData";
 import { AbilitiesGrid } from "./AbilitiesGrid";
 
 export default async function AbilitiesPage() {
   await requireRole(["主管"]);
 
   const supabase = await createClient();
-  const [{ data: positions }, { data: pt }, { data: abilities }] = await Promise.all([
-    supabase.from("positions").select("id, name").eq("is_active", true).order("sort_order"),
-    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
+  const [positions, pt, { data: abilities }] = await Promise.all([
+    getCachedActivePositions(),
+    getCachedActivePt(),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
   ]);
 

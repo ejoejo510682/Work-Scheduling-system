@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, getDefaultWeekMonday, getMonday } from "@/lib/date";
+import { getCachedActivePositions, getCachedActivePt } from "@/lib/cachedReferenceData";
 import { WeeklyTasksPanel } from "./WeeklyTasksPanel";
 
 export default async function WeeklyTasksPage({
@@ -17,21 +18,17 @@ export default async function WeeklyTasksPage({
   const nextWeek = addDays(monday, 7);
 
   const supabase = await createClient();
-  const [{ data: positions }, { data: pt }, { data: abilities }, { data: tasks }, { data: assignments }] =
-    await Promise.all([
-      supabase.from("positions").select("id, name").eq("is_active", true).order("sort_order"),
-      supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
-      supabase.from("pt_abilities").select("pt_id, position_id, level"),
-      supabase
-        .from("weekly_tasks")
-        .select("id, name, note, required_position_id, required_level, status")
-        .eq("week_start", monday)
-        .order("id"),
-      supabase
-        .from("weekly_task_assignments")
-        .select("id, task_id, pt_id")
-        .order("id"),
-    ]);
+  const [positions, pt, { data: abilities }, { data: tasks }, { data: assignments }] = await Promise.all([
+    getCachedActivePositions(),
+    getCachedActivePt(),
+    supabase.from("pt_abilities").select("pt_id, position_id, level"),
+    supabase
+      .from("weekly_tasks")
+      .select("id, name, note, required_position_id, required_level, status")
+      .eq("week_start", monday)
+      .order("id"),
+    supabase.from("weekly_task_assignments").select("id, task_id, pt_id").order("id"),
+  ]);
 
   const taskIds = new Set((tasks ?? []).map((t) => t.id));
   const relevantAssignments = (assignments ?? []).filter((a) => taskIds.has(a.task_id));

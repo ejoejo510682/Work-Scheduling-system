@@ -1,13 +1,14 @@
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
+import { getCachedActivePt } from "@/lib/cachedReferenceData";
 import { TrainingPanel } from "./TrainingPanel";
 
 export default async function TrainingPage() {
   const adminUser = await requireRole(["主管"]);
 
   const supabase = await createClient();
-  const [{ data: pt }, { data: trainingItems }, { data: records }] = await Promise.all([
-    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
+  const [pt, { data: trainingItems }, { data: records }] = await Promise.all([
+    getCachedActivePt(),
     supabase
       .from("training_items")
       .select("id, name, position_id, positions(name)")

@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, formatDateLabel, getDefaultWeekMonday, getMonday, WEEKDAY_LABELS } from "@/lib/date";
 import type { Slot } from "@/lib/constants";
+import { getCachedActivePositions, getCachedActivePt } from "@/lib/cachedReferenceData";
 import { PrintButton } from "@/components/admin/PrintButton";
 
 // 設計系統：以「出貨單/提單」的紙本質感為方向——暖色調的墨與紙、
@@ -49,9 +50,9 @@ export default async function SchedulePrintPage({
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
 
   const supabase = await createClient();
-  const [{ data: positions }, { data: pt }, { data: assignments }] = await Promise.all([
-    supabase.from("positions").select("id, name").eq("is_active", true),
-    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
+  const [positions, pt, { data: assignments }] = await Promise.all([
+    getCachedActivePositions(),
+    getCachedActivePt(),
     supabase
       .from("daily_schedule")
       .select("date, slot, position_id, pt_id, priority")

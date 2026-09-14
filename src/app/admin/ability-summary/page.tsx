@@ -1,6 +1,7 @@
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { ABILITY_LEVELS, type EmploymentType } from "@/lib/constants";
+import { getCachedActivePositions, getCachedActivePt } from "@/lib/cachedReferenceData";
 import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
 const levelStyles: Record<number, string> = {
@@ -15,9 +16,9 @@ export default async function AbilitySummaryPage() {
   await requireRole(["主管", "排班人員"]);
 
   const supabase = await createClient();
-  const [{ data: positions }, { data: pt }, { data: abilities }] = await Promise.all([
-    supabase.from("positions").select("id, name").eq("is_active", true).order("sort_order"),
-    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
+  const [positions, pt, { data: abilities }] = await Promise.all([
+    getCachedActivePositions(),
+    getCachedActivePt(),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
   ]);
 

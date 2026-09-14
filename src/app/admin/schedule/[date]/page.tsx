@@ -3,6 +3,12 @@ import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, getMonday, WEEKDAY_LABELS } from "@/lib/date";
 import { ecommerceCampaignLabel } from "@/lib/specialDates";
+import {
+  getCachedActivePositions,
+  getCachedPositionSlotMap,
+  getCachedPositionHeadcount,
+  getCachedActivePt,
+} from "@/lib/cachedReferenceData";
 import { ScheduleDay } from "./ScheduleDay";
 
 export default async function ScheduleDayPage({
@@ -22,20 +28,20 @@ export default async function ScheduleDayPage({
 
   const supabase = await createClient();
   const [
-    { data: positions },
-    { data: slotMap },
-    { data: headcounts },
-    { data: pt },
+    positions,
+    slotMap,
+    headcounts,
+    pt,
     { data: abilities },
     { data: availability },
     { data: assignments },
     { data: weekAssignments },
     { data: specialDates },
   ] = await Promise.all([
-    supabase.from("positions").select("id, name, sort_order").eq("is_active", true).order("sort_order"),
-    supabase.from("position_slot_map").select("position_id, slot"),
-    supabase.from("position_headcount").select("position_id, headcount"),
-    supabase.from("pt_staff").select("id, name, employment_type").eq("is_active", true).order("name"),
+    getCachedActivePositions(),
+    getCachedPositionSlotMap(),
+    getCachedPositionHeadcount(),
+    getCachedActivePt(),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
     supabase.from("pt_daily_availability").select("pt_id, range").eq("date", date),
     supabase.from("daily_schedule").select("id, slot, position_id, pt_id, priority").eq("date", date),
