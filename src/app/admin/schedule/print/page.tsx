@@ -173,7 +173,7 @@ export default async function SchedulePrintPage({
                     {rowIdx === 0 && (
                       <td
                         rowSpan={SLOT_ROWS.length}
-                        className="border px-2 py-1 text-center align-middle font-bold text-sm print:text-xs"
+                        className="border px-2 py-1 text-center align-middle font-bold text-sm print:text-xs whitespace-nowrap"
                         style={{
                           backgroundColor: rowBg,
                           borderColor: LINE,
