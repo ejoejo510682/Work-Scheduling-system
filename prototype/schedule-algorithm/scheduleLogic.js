@@ -279,13 +279,29 @@ function currentPriorityCount(ctx, date, slot, positionId) {
   ).length;
 }
 
+// 第五次補充決議：max_headcount 算的是「第一任務＋備援」合計（包裝站 4 個工位，
+// 做完撿貨過來支援包裝的人也要佔一個工位），所以這裡不分 priority 全部算
+function occupiedCount(ctx, date, slot, positionId) {
+  return ctx.scheduleRows.filter((r) => r.date === date && r.slot === slot && r.position_id === positionId).length;
+}
+
 function hasCapacity(ctx, date, slot, position) {
   if (position.max_headcount == null) return true;
-  return currentPriorityCount(ctx, date, slot, position.id) < position.max_headcount;
+  return occupiedCount(ctx, date, slot, position.id) < position.max_headcount;
 }
 
 function canWorkSaturday(staffRow) {
   return staffRow.can_work_saturday !== false;
+}
+
+// 第五次補充決議：性別限制是「能不能排」，跟能力等級（會不會做）分開。
+// positions.gender_restriction 為 null＝不限；目前只有出箱貨限「男」
+function genderOk(staffRow, position) {
+  return !position || !position.gender_restriction || (!!staffRow && staffRow.gender === position.gender_restriction);
+}
+
+function genderOkById(ctx, ptId, position) {
+  return genderOk(ctx.activeStaff.find((s) => s.id === ptId), position);
 }
 
 function lookupStaffName(ctx, ptId) {
@@ -360,9 +376,11 @@ function validateLockedRows(ctx, locked) {
     if (isSaturday(r.date) && !canWorkSaturday(staffRow)) flag(r, "這個人固定不能上週六");
     if (getLevel(r.pt_id, r.position_id, ctx.abilities) === 1) flag(r, "這個崗位的能力是一級（不能排）");
     const position = ctx.allPositionById.get(r.position_id);
-    if (position && position.max_headcount != null && (r.priority || 1) === 1) {
-      const count = currentPriorityCount(ctx, r.date, r.slot, r.position_id);
-      if (count > position.max_headcount) flag(r, `這個時段「${position.name}」已經 ${count} 人，超過上限 ${position.max_headcount} 人`);
+    if (position && !genderOk(staffRow, position)) flag(r, `這個崗位限${position.gender_restriction}性，${staffRow.name}是${staffRow.gender}性`);
+    if (position && position.max_headcount != null) {
+      // 上限含備援：第一任務＋備援合計（此時只有手動鎖定的列，自動排班還沒開始）
+      const count = occupiedCount(ctx, r.date, r.slot, r.position_id);
+      if (count > position.max_headcount) flag(r, `這個時段「${position.name}」手動鎖定的第一任務＋備援已經 ${count} 人，超過上限 ${position.max_headcount} 人`);
     }
   }
 
@@ -484,7 +502,9 @@ function buildEligiblePool(positionIds, date, slot, ctx, excludeIds) {
     .filter((s) => isUnderWeeklyCap(s.id, s, ctx, date))
     .filter((s) => isAvailableForSlotToday(s.id, date, slot, ctx))
     .filter((s) => !isAssignedThisSlot(ctx, date, slot, s.id))
-    .filter((s) => positionIds.some((pid) => getLevel(s.id, pid, ctx.abilities) >= 2))
+    .filter((s) =>
+      positionIds.some((pid) => getLevel(s.id, pid, ctx.abilities) >= 2 && genderOk(s, ctx.positionById.get(pid)))
+    )
     .map((s) => s.id);
 }
 
@@ -494,7 +514,10 @@ function fillPosition(ctx, date, slot, position, target, candidatePool, groupPos
   let filledCount = currentPriorityCount(ctx, date, slot, position.id);
   if (filledCount >= target) return 0;
 
-  const remainingPool = candidatePool.filter((id) => !isAssignedThisSlot(ctx, date, slot, id));
+  // 性別限制：不符合的人直接不列入這個崗位的候選
+  const remainingPool = candidatePool.filter(
+    (id) => !isAssignedThisSlot(ctx, date, slot, id) && genderOkById(ctx, id, position)
+  );
   const ranked = rankCandidates(remainingPool, ctx, groupPositionIdsForRanking);
 
   let added = 0;
@@ -556,9 +579,12 @@ function computePrinterRotation(input, ctx) {
   const printerPosition = ctx.positions.find((p) => p.name === "印訂單");
   const priorityInfoByDate = new Map(weekDates.map((d) => [d, isPriorityShippingDay(d, ctx.specialDates)]));
 
-  // 正職的 3 天
+  // 正職的 3 天（印訂單目前沒有性別限制，但輪排一樣先過性別檢查，之後有限制也不會排錯）
   const fullTimePrinters = ctx.activeStaff.filter(
-    (s) => s.employment_type === "正職" && getLevel(s.id, printerPosition.id, ctx.abilities) >= 2
+    (s) =>
+      s.employment_type === "正職" &&
+      genderOk(s, printerPosition) &&
+      getLevel(s.id, printerPosition.id, ctx.abilities) >= 2
   );
   const monday = weekDates[0];
   const saturday = weekDates[5];
@@ -606,7 +632,7 @@ function computePrinterRotation(input, ctx) {
   const lockedPtPrinterDays = (ptId) => ptDaysAll.filter((d) => lockedPrinterByDate.get(d) === ptId).length;
 
   const ptPrinters = ctx.activeStaff.filter(
-    (s) => s.employment_type === "PT" && getLevel(s.id, printerPosition.id, ctx.abilities) === 3
+    (s) => s.employment_type === "PT" && genderOk(s, printerPosition) && getLevel(s.id, printerPosition.id, ctx.abilities) === 3
   );
 
   // 讀上週的 daily_schedule，算每個人上週印訂單排了幾天
@@ -687,6 +713,7 @@ function resolvePrinterForDate(rotation, date, ctx) {
     (s) =>
       s.id !== candidateId &&
       saturdayOk(s) &&
+      genderOk(s, printerPosition) &&
       getLevel(s.id, printerPosition.id, ctx.abilities) >= 2 &&
       printerIsUsable(s.id, s, date, ctx)
   );
@@ -714,37 +741,53 @@ function resolvePrinterForDate(rotation, date, ctx) {
 // 時段本來就有開的崗位（position_slot_map）；這個時段沒開的崗位不能當備援，直接
 // 不產生備援列（例如印訂單在「出訂單前」，包裝只開在「出訂單後」，就不能互為備援）。
 // 不納入自動排班的崗位（處理退貨等）不在 positionById 裡，也一律不會被當成備援。
+//
+// 第五次補充決議：
+//   - 備援也要過性別限制
+//   - 備援佔 max_headcount：第一任務＋備援合計不能超過上限（包裝 4 人）。第一任務已經
+//     4 人就不再排備援；只剩 N 個位子時，從符合資格的人裡挑 N 位：三級優先，同級再照
+//     rankCandidates（三級崗位多的優先 → 本週上班天數少的優先 → 姓名）
 // ----------------------------------------------------------------------------
 
 function assignBackups(ctx, date, slot) {
   const primariesThisSlot = ctx.scheduleRows.filter(
     (r) => r.date === date && r.slot === slot && r.priority === 1
   );
+
+  // 依「要支援哪個備援崗位」分組，同一個備援崗位的人一起排序、一起分剩下的位子
+  const candidatesByBackup = new Map();
   for (const row of primariesThisSlot) {
     const position = ctx.positionById.get(row.position_id);
     if (!position || !position.default_backup_position_id) continue;
     const backupPosition = ctx.positionById.get(position.default_backup_position_id);
     if (!backupPosition) continue;
     if (!(ctx.slotsForPosition.get(backupPosition.id) || []).includes(slot)) continue;
+    if (!genderOkById(ctx, row.pt_id, backupPosition)) continue;
+    if (getLevel(row.pt_id, backupPosition.id, ctx.abilities) < 2) continue;
+    if (!candidatesByBackup.has(backupPosition.id)) candidatesByBackup.set(backupPosition.id, []);
+    candidatesByBackup.get(backupPosition.id).push(row.pt_id);
+  }
 
-    const level = getLevel(row.pt_id, backupPosition.id, ctx.abilities);
-    if (level === 3) {
-      commitAssignment(ctx, date, slot, backupPosition, row.pt_id, 2);
-      continue;
+  for (const [backupId, ptIds] of candidatesByBackup) {
+    const backupPosition = ctx.positionById.get(backupId);
+    const groupIds = backupPosition.group === GROUP_SHIPPING ? ctx.shippingPositionIds : ctx.inboundPositionIds;
+    const ranked = rankCandidates(ptIds, ctx, groupIds);
+    const level3 = ranked.filter((id) => getLevel(id, backupId, ctx.abilities) === 3);
+    const level2 = ranked.filter((id) => getLevel(id, backupId, ctx.abilities) === 2);
+
+    for (const ptId of level3) {
+      if (!hasCapacity(ctx, date, slot, backupPosition)) break;
+      commitAssignment(ctx, date, slot, backupPosition, ptId, 2);
     }
-    if (level === 2) {
-      // 二級要「這個備援崗位、這個時段」已經有一位三級的人（不論是第一或第二任務）才能排
-      const hasLevel3InBackup = ctx.scheduleRows.some(
-        (r) =>
-          r.date === date &&
-          r.slot === slot &&
-          r.position_id === backupPosition.id &&
-          getLevel(r.pt_id, backupPosition.id, ctx.abilities) === 3
+    // 二級要「這個備援崗位、這個時段」已經有一位三級的人（不論是第一或第二任務）才能排；
+    // 不符合能力規則、或位子已滿就留空，不產生任何列，也不算警告（票2決議：不符合時留空）
+    const hasLevel3InBackup = () =>
+      ctx.scheduleRows.some(
+        (r) => r.date === date && r.slot === slot && r.position_id === backupId && getLevel(r.pt_id, backupId, ctx.abilities) === 3
       );
-      if (hasLevel3InBackup) {
-        commitAssignment(ctx, date, slot, backupPosition, row.pt_id, 2);
-      }
-      // 不符合能力規則就留空，不產生任何列，也不算警告（票2決議：不符合時留空）
+    for (const ptId of level2) {
+      if (!hasCapacity(ctx, date, slot, backupPosition)) break;
+      if (hasLevel3InBackup()) commitAssignment(ctx, date, slot, backupPosition, ptId, 2);
     }
   }
 }
@@ -949,9 +992,10 @@ function assignSaturday(ctx, date, printerId) {
   // 手動鎖定的格子已經佔掉那個人那個時段，這裡只補他還空著的時段
   function commitIfFree(slot, position, ptId) {
     if (isAssignedThisSlot(ctx, date, slot, ptId)) return;
-    // 「包裝」硬性上限 4 人，週六也不能破例——這個時段若包裝已經滿了，改排撿貨保底
-    const pos = hasCapacity(ctx, date, slot, position) ? position : pickingPosition;
-    commitAssignment(ctx, date, slot, pos, ptId, 1);
+    // 「包裝」硬性上限 4 人，週六也不能破例——這個時段若包裝已經滿了（或性別不符），改排撿貨保底
+    const staffRow = ctx.activeStaff.find((s) => s.id === ptId);
+    const pos = [position, pickingPosition].find((p) => genderOk(staffRow, p) && hasCapacity(ctx, date, slot, p));
+    if (pos) commitAssignment(ctx, date, slot, pos, ptId, 1);
   }
   const staffById = (id) => ctx.activeStaff.find((s) => s.id === id);
   const crewIds = () =>
@@ -963,7 +1007,7 @@ function assignSaturday(ctx, date, printerId) {
     canWorkSaturday(s) &&
     isUnderWeeklyCap(s.id, s, ctx, date) &&
     isAvailableForSlotToday(s.id, date, SATURDAY_SLOTS[0], ctx) &&
-    shippingPositionIds.some((pid) => getLevel(s.id, pid, ctx.abilities) >= 2);
+    saturdayPtPositions.some((p) => getLevel(s.id, p.id, ctx.abilities) >= 2 && genderOk(s, p));
   const byLevel3Desc = (a, b) =>
     countLevel3(b.id, ctx.abilities, shippingPositionIds) - countLevel3(a.id, ctx.abilities, shippingPositionIds);
   const shippingFirst = (list) => [
@@ -1022,7 +1066,8 @@ function assignSaturday(ctx, date, printerId) {
   for (const staffRow of ptCrew) {
     // 依能力挑一個這個人做得來的出貨崗位（三級優先），找不到就排「撿貨」保底（週六主力工作）
     const chosenPosition =
-      saturdayPtPositions.find((p) => getLevel(staffRow.id, p.id, ctx.abilities) === 3) || pickingPosition;
+      saturdayPtPositions.find((p) => getLevel(staffRow.id, p.id, ctx.abilities) === 3 && genderOk(staffRow, p)) ||
+      pickingPosition;
     for (const slot of SATURDAY_SLOTS) commitIfFree(slot, chosenPosition, staffRow.id);
   }
 
@@ -1093,6 +1138,7 @@ function ensureFullTimeWorked(ctx, date, slots, skipPositionIds, isPriority) {
           !skip.has(p.id) &&
           (ctx.slotsForPosition.get(p.id) || []).includes(slot) &&
           getLevel(s.id, p.id, ctx.abilities) >= 2 &&
+          genderOk(s, p) &&
           hasCapacity(ctx, date, slot, p) &&
           // 挑人順序 step2：進貨組的人只有出貨優先日才能排出貨崗位，保底檢查也不例外
           !(s.primary_group === GROUP_INBOUND && p.group === GROUP_SHIPPING && !isPriority)
