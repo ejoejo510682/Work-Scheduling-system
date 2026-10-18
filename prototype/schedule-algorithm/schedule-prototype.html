@@ -98,6 +98,12 @@
   .pos-name { color: var(--muted); }
   .person { display: inline-block; background: #eef2ff; border-radius: 5px; padding: 1px 6px; margin: 1px 2px 1px 0; font-size: 12.3px; }
   .person.backup { background: #f3f4f6; color: var(--muted); border: 1px dashed #c7cbd4; }
+  .person.locked { background: #fde7c8; border: 2px solid #c27a12; font-weight: 600; }
+  table.schedule td.changed { background: #fffbe0; box-shadow: inset 0 0 0 2px #e9c84a; }
+  .warn-locked { background: #fde7c8; border-color: #e0a959; }
+  .lock-list { list-style: none; margin: 8px 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .lock-list li { display: flex; align-items: center; gap: 10px; }
+  .scenario-desc button { margin: 6px 6px 0 0; }
   .day-head { font-size: 12px; color: var(--muted); font-weight: 500; }
   .empty-cell { color: #c2c6cc; }
   .warn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -190,6 +196,27 @@
     <span class="small" id="freeplayHint" style="margin-left:10px;"></span>
   </div>
 
+  <div class="panel">
+    <h3>手動調整（鎖定）＋重排整週</h3>
+    <p class="small">
+      模擬 Cynthia 在草稿上手動改格子：手動指派的格子會被「鎖定」，按「重排整週」時鎖定的格子一律不動，
+      其他格子全部重新計算。重排後跟上一次結果不一樣的格子會用黃框標出來。
+    </p>
+    <div class="freeplay-grid">
+      <div><label>誰</label><select id="lockPerson"></select></div>
+      <div><label>哪一天</label><select id="lockDate"></select></div>
+      <div><label>哪個時段</label><select id="lockSlot"></select></div>
+      <div><label>改去哪個崗位（含不自動排的崗位）</label><select id="lockPosition"></select></div>
+      <div style="display:flex; align-items:flex-end;">
+        <button class="ghost-btn" id="addLockBtn">手動指派（鎖定）</button>
+      </div>
+    </div>
+    <div class="small">目前鎖定的格子：</div>
+    <ul class="lock-list" id="lockList"></ul>
+    <button class="primary-btn" id="rerunBtn">重排整週</button>
+    <span class="small" id="lockHint" style="margin-left:10px;"></span>
+  </div>
+
   <div class="two-col">
     <div class="panel">
       <h2>這一週的班表</h2>
@@ -197,6 +224,8 @@
       <div class="legend">
         <span><span class="dot" style="background:#eef2ff;border:1px solid #c7cbd4;"></span>第一任務</span>
         <span><span class="dot" style="background:#f3f4f6;border:1px dashed #c7cbd4;"></span>備援（第二任務）</span>
+        <span><span class="dot" style="background:#fde7c8;border:2px solid #c27a12;"></span>手動鎖定</span>
+        <span><span class="dot" style="background:#fffbe0;border:2px solid #e9c84a;"></span>重排後有變動的格子</span>
       </div>
     </div>
     <div class="panel">
@@ -296,18 +325,20 @@ const SLOT_MAP = [
   { position_id: "stocktake", slot: "出貨完成後" },
 ];
 
+// can_work_saturday（第三次補充決議，尚未 migrate 的新欄位）：長期固定不能上週六的人。
+// 真實狀況：正職只有王瀞玉、許庭瑄能上週六，黃盈珊、連陳軒固定不行
 const STAFF = [
-  { id: "s1", name: "李睿懷", employment_type: "PT", primary_group: "出貨組", is_active: true },
-  { id: "s2", name: "林清瑞", employment_type: "PT", primary_group: "出貨組", is_active: true },
-  { id: "s3", name: "楊鎔慈", employment_type: "PT", primary_group: "出貨組", is_active: true },
-  { id: "s4", name: "葉翠茹", employment_type: "PT", primary_group: "出貨組", is_active: true },
-  { id: "s5", name: "陳語姍", employment_type: "PT", primary_group: "出貨組", is_active: true },
-  { id: "s6", name: "黃依婷", employment_type: "PT", primary_group: "出貨組", is_active: true },
-  { id: "s7", name: "王瀞玉", employment_type: "正職", primary_group: "出貨組", is_active: true },
-  { id: "s8", name: "許庭瑄", employment_type: "正職", primary_group: "出貨組", is_active: true },
-  { id: "s9", name: "黃盈珊", employment_type: "正職", primary_group: "出貨組", is_active: true },
-  { id: "s10", name: "連陳軒", employment_type: "正職", primary_group: "進貨組", is_active: true },
-  { id: "s11", name: "李玄鳳", employment_type: "PT", primary_group: "進貨組", is_active: true },
+  { id: "s1", name: "李睿懷", employment_type: "PT", primary_group: "出貨組", can_work_saturday: true, is_active: true },
+  { id: "s2", name: "林清瑞", employment_type: "PT", primary_group: "出貨組", can_work_saturday: true, is_active: true },
+  { id: "s3", name: "楊鎔慈", employment_type: "PT", primary_group: "出貨組", can_work_saturday: true, is_active: true },
+  { id: "s4", name: "葉翠茹", employment_type: "PT", primary_group: "出貨組", can_work_saturday: true, is_active: true },
+  { id: "s5", name: "陳語姍", employment_type: "PT", primary_group: "出貨組", can_work_saturday: true, is_active: true },
+  { id: "s6", name: "黃依婷", employment_type: "PT", primary_group: "出貨組", can_work_saturday: true, is_active: true },
+  { id: "s7", name: "王瀞玉", employment_type: "正職", primary_group: "出貨組", can_work_saturday: true, is_active: true },
+  { id: "s8", name: "許庭瑄", employment_type: "正職", primary_group: "出貨組", can_work_saturday: true, is_active: true },
+  { id: "s9", name: "黃盈珊", employment_type: "正職", primary_group: "出貨組", can_work_saturday: false, is_active: true },
+  { id: "s10", name: "連陳軒", employment_type: "正職", primary_group: "進貨組", can_work_saturday: false, is_active: true },
+  { id: "s11", name: "李玄鳳", employment_type: "PT", primary_group: "進貨組", can_work_saturday: true, is_active: true },
 ];
 
 function ab(pt_id, position_id, level) { return { pt_id, position_id, level }; }
@@ -321,7 +352,8 @@ const ABILITIES = [
   // 處理退貨的能力記錄照真實資料庫填（只有這 3 位正職是三級，PT 都沒記錄）；不過退貨
   // 現在是任務型崗位、不納入自動排班，這些記錄目前不會影響任何排班結果
   ...[["s7","printer",3],["s7","picking",3],["s7","packing",3],["s7","boxship",3],["s7","nopack",3],["s7","return",3]].map(a=>ab(...a)),
-  ...[["s8","picking",3],["s8","packing",3],["s8","boxship",3],["s8","nopack",3],["s8","printer",2],["s8","return",3]].map(a=>ab(...a)),
+  // 許庭瑄的「處理批發訂單」三級是假資料，給情境(k)「手動抽去做批發」示範用
+  ...[["s8","picking",3],["s8","packing",3],["s8","boxship",3],["s8","nopack",3],["s8","printer",2],["s8","return",3],["s8","wholesale",3]].map(a=>ab(...a)),
   ...[["s9","picking",3],["s9","packing",2],["s9","boxship",3],["s9","nopack",2],["s9","return",3]].map(a=>ab(...a)),
   ...[["s10","inbound",3],["s10","groupbuy",3]].map(a=>ab(...a)),
   // 進貨組的李玄鳳平常只做進貨，但也登記了撿貨/包裝/出箱貨的能力——只有出貨優先日
@@ -378,12 +410,14 @@ function baseInput(headcounts, overrides, specialDates, prevWeek) {
     availability: fullAvailability(overrides),
     specialDates: specialDates || [],
     previousWeekSchedule: prevWeek || BALANCED_PREV_WEEK,
+    // 這週目前的班表；只有 source='manual'（手動鎖定）的列會被讀進去，其餘整週重排
+    currentWeekSchedule: [],
   };
 }
 
 // ============================================================================
-// 9 個引導情境：(a)(d)(e)(f) 是延續第一版、本來就正確的情境（資料更新成真實的
-// 10 個崗位），(b)(c)(g)(h)(i) 是 bug 修正／補充決議新增或改寫的情境
+// 11 個引導情境：(a)(d)(e)(f) 是延續第一版、本來就正確的情境（資料更新成真實的
+// 10 個崗位），(b)(c)(g)(h)(i)(j)(k) 是 bug 修正／各次補充決議新增或改寫的情境
 // ============================================================================
 
 const SCENARIOS = {
@@ -459,15 +493,11 @@ const SCENARIOS = {
     },
   },
   h: {
-    label: "(h) 週六湊不滿 4 人的警示",
-    desc: "【修正：週六一定要湊滿 4 人，排不滿要有明確警示】讓週六所有正職請假（印訂單輪排到的人、以及備援的正職都無法頂上），同時讓大部分 PT 也請假，只留李睿懷登記週六可上班。結果李睿懷因為平日（週一～週五）已經被正常排滿本週 4 天上限，週六依規則也不能再排他——週六最後 0 正職 + 0 PT，完全湊不到人，遠低於硬性規定的 4 人（1 正職 + 3 PT）。檢查草稿提醒裡是否有清楚寫出「人數沒有湊滿硬性規定的 4 人」，而不是悄悄排少於 4 人就算了（這個案例同時也示範了「PT 4 天上限」跟「週六硬性 4 人」兩條規則疊加時會發生什麼事，兩條都正確生效，沒有互相蓋過）。",
+    label: "(h) 週六能上班的正職都請假",
+    desc: "【週六一定要湊滿 4 人＋固定不能上週六的人】真實狀況是正職裡只有王瀞玉、許庭瑄能上週六（黃盈珊、連陳軒固定不行，can_work_saturday=false）。這裡讓王瀞玉、許庭瑄週六都請假：黃盈珊、連陳軒雖然週六沒請假，也<b>不會</b>被排進週六（也不會被當成人力過剩），所以週六湊不到正職。檢查草稿提醒：印訂單找不到能上週六的正職頂上，以及「人數沒有湊滿硬性規定的 4 人……正職 0/1 位」的警示；PT 還是會照常排滿 3 位。",
     build: () => {
       const sat = WEEK_DATES[5];
-      const overrides = {};
-      for (const s of STAFF) {
-        if (s.id === "s1") continue;
-        overrides[s.id] = { [sat]: "全天休假" };
-      }
+      const overrides = { s7: { [sat]: "全天休假" }, s8: { [sat]: "全天休假" } };
       return baseInput(RELAXED_HEADCOUNT, overrides, [], BALANCED_PREV_WEEK);
     },
   },
@@ -476,14 +506,37 @@ const SCENARIOS = {
     desc: "【position_slot_map 用真實資料＋任務型崗位不自動排】用公司目前真實的基準人數跑一整週，逐一核對：每個崗位只出現在它真實對應的時段（例如無包裝出貨只在「下午出訂單後」、印訂單只在兩個「出訂單前」），「出貨完成後」只剩處理進貨。已停用的「處理團購訂單」，以及「處理批發訂單」「處理退貨」「盤點」三個任務型崗位（有任務才排、怎麼排之後另外討論），整張表格、整份提醒清單都不會出現任何一筆資料，也不會為它們跳缺人提醒。",
     build: () => baseInput(REAL_HEADCOUNT, null, [], BALANCED_PREV_WEEK),
   },
+  j: {
+    label: "(j) 週六出貨組不夠，進貨組補",
+    desc: "【第三次補充決議：週六先挑出貨組，出貨組不夠才找進貨組（不管是不是出貨優先日）】這個週六不是出貨優先日。讓出貨組的楊鎔慈、葉翠茹、陳語姍週六請假，李睿懷平日已經用完 PT 4 天上限——出貨組週六能排的 PT 只剩林清瑞、黃依婷 2 位，不夠 3 位。所以第 3 位 PT 由進貨組的李玄鳳補上（她週一、週二請假，平日沒有用完 4 天上限），週六照樣湊滿 4 人：王瀞玉（印單後支援撿貨）＋林清瑞＋黃依婷＋李玄鳳。草稿提醒裡會寫明「出貨組可上班的 PT 不夠，改由進貨組的李玄鳳補上」。（平日的規則不變：週一到週五，進貨組的人還是只有出貨優先日才會被排進出貨崗位。）",
+    build: () => {
+      const sat = WEEK_DATES[5];
+      const overrides = {
+        s3: { [sat]: "全天休假" }, s4: { [sat]: "全天休假" }, s5: { [sat]: "全天休假" },
+        // 李玄鳳週一、週二請假，才不會在平日就把 PT 4 天上限用完，週六還排得進來
+        s11: { [WEEK_DATES[0]]: "全天休假", [WEEK_DATES[1]]: "全天休假" },
+      };
+      return baseInput(RELAXED_HEADCOUNT, overrides, [], BALANCED_PREV_WEEK);
+    },
+  },
+  k: {
+    label: "(k) 手動調整後重排整週",
+    desc: "【第三次補充決議：手動調整 → 鎖定 → 重排整週】下面的班表是系統先排好的整週草稿。照著做：<br>" +
+      "<button class=\"ghost-btn\" onclick=\"demoLockStep()\">步驟 1：把許庭瑄週三「上午出訂單後」從包裝抽去做「處理批發訂單」（手動、鎖定）</button>" +
+      "<button class=\"primary-btn\" onclick=\"rerunWeek()\">步驟 2：重排整週</button><br>" +
+      "先看週三「上午出訂單後」那一格：原本是許庭瑄在包裝。按完步驟 1，那格會出現橘色的「許庭瑄（鎖定）」在處理批發訂單，包裝變成只剩備援、沒有人真正在做（模擬 Cynthia 剛手動改完、系統還沒重算的樣子）。按步驟 2 之後：鎖定的那格一字不動；包裝的空缺由當天原本沒排到工作的楊鎔慈補上；其他格子全部重新算過，跟步驟 1 畫面不一樣的格子會用黃框標出（這個例子只有這一格需要重組，因為當天有空的人夠多；人手比較緊的週，抽走一個人可能會連帶讓別的格子、甚至別天跟著換人）。處理批發訂單本身不納入自動排班，但被鎖定的這一格照樣算數：佔掉許庭瑄這個時段、算進崗位人數。也可以用下方「手動調整（鎖定）」區塊自己改別的格子、解除鎖定、再重排。",
+    build: () => baseInput(RELAXED_HEADCOUNT, null, [], BALANCED_PREV_WEEK),
+  },
 };
 
 // ============================================================================
 // 畫面邏輯（這整個 <script> 區塊以下都是原型用的畫面，不是要搬進正式專案的東西）
 // ============================================================================
 
-let currentInput = SCENARIOS.a.build();
+// 每次切分頁都複製一份，避免「自由調整」「手動鎖定」改到共用的假資料，影響其他分頁
+let currentInput = cloneInput(SCENARIOS.a.build());
 let activeTabKey = "a";
+let lastResult = null; // 畫面上目前顯示的班表，用來跟「重排整週」後的結果比對哪些格子變了
 
 function staffName(id) { const s = STAFF.find((x) => x.id === id); return s ? s.name : id; }
 function positionName(id) { const p = POSITIONS.find((x) => x.id === id); return p ? p.name : id; }
@@ -497,7 +550,8 @@ function renderTabs() {
     btn.textContent = SCENARIOS[key].label;
     btn.onclick = () => {
       activeTabKey = key;
-      currentInput = SCENARIOS[key].build();
+      currentInput = cloneInput(SCENARIOS[key].build());
+      lastResult = null;
       renderAll();
     };
     bar.appendChild(btn);
@@ -517,7 +571,26 @@ function renderFreeplayOptions() {
   posSel.innerHTML = POSITIONS.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
 }
 
-function renderSchedule(result) {
+function cellSignature(result, d, slot) {
+  return result.schedule
+    .filter((r) => r.date === d && r.slot === slot)
+    .map((r) => `${r.position_name}:${r.pt_name}:${r.priority}:${r.source}`)
+    .sort()
+    .join("|");
+}
+
+function changedCells(before, after) {
+  const changed = new Set();
+  if (!before) return changed;
+  for (const d of WEEK_DATES) {
+    for (const slot of ScheduleLogic.SLOTS) {
+      if (cellSignature(before, d, slot) !== cellSignature(after, d, slot)) changed.add(`${d}|${slot}`);
+    }
+  }
+  return changed;
+}
+
+function renderSchedule(result, changed) {
   const container = document.getElementById("scheduleContainer");
   const table = document.createElement("table");
   table.className = "schedule";
@@ -540,6 +613,7 @@ function renderSchedule(result) {
 
     for (const d of WEEK_DATES) {
       const td = document.createElement("td");
+      if (changed && changed.has(`${d}|${slot}`)) td.className = "changed";
       const rows = result.schedule.filter((r) => r.date === d && r.slot === slot);
       if (rows.length === 0) {
         td.innerHTML = '<span class="empty-cell">—</span>';
@@ -552,7 +626,11 @@ function renderSchedule(result) {
         td.innerHTML = Object.entries(byPos)
           .map(([posName, items]) => {
             const chips = items
-              .map((r) => `<span class="person${r.priority === 2 ? " backup" : ""}">${r.pt_name}${r.priority === 2 ? "（備援）" : ""}</span>`)
+              .map((r) => {
+                const cls = r.source === "manual" ? " locked" : r.priority === 2 ? " backup" : "";
+                const tag = r.source === "manual" ? "（鎖定）" : r.priority === 2 ? "（備援）" : "";
+                return `<span class="person${cls}">${r.pt_name}${tag}</span>`;
+              })
               .join("");
             return `<div class="pos-line"><span class="pos-name">${posName}：</span>${chips}</div>`;
           })
@@ -572,6 +650,7 @@ const WARNING_LABEL = {
   missing_availability: "未登記可上班時間",
   priority_day: "出貨優先日",
   info: "提示",
+  locked: "手動調整",
 };
 
 // 警告訊息裡的日期是 YYYY-MM-DD（純邏輯模組用的格式），畫面上照專案慣例顯示成 YYYY/MM/DD
@@ -590,16 +669,100 @@ function renderWarnings(result) {
     .join("");
 }
 
-function runAndRender() {
+// showDiff=true 時，把跟畫面上前一份班表不一樣的格子標黃框；回傳變動的格子數
+function runAndRender(showDiff) {
   const result = ScheduleLogic.generateWeekSchedule(currentInput);
-  renderSchedule(result);
+  const changed = showDiff ? changedCells(lastResult, result) : new Set();
+  renderSchedule(result, changed);
   renderWarnings(result);
+  renderLockList();
+  lastResult = result;
+  return changed.size;
 }
 
 function renderAll() {
   renderTabs();
-  runAndRender();
+  runAndRender(false);
 }
+
+// ---- 手動鎖定 ----
+
+function lockedRows() {
+  return currentInput.currentWeekSchedule.filter((r) => r.source === "manual");
+}
+
+function renderLockOptions() {
+  document.getElementById("lockPerson").innerHTML = STAFF.map((s) => `<option value="${s.id}">${s.name}（${s.employment_type}）</option>`).join("");
+  document.getElementById("lockDate").innerHTML = WEEK_DATES.map((d) => `<option value="${d}">${dateLabel(d)}</option>`).join("");
+  document.getElementById("lockSlot").innerHTML = ScheduleLogic.SLOTS.map((s) => `<option value="${s}">${s}</option>`).join("");
+  document.getElementById("lockPosition").innerHTML = POSITIONS.filter((p) => p.is_active !== false)
+    .map((p) => `<option value="${p.id}">${p.name}${p.included_in_auto_schedule === false ? "（不自動排）" : ""}</option>`)
+    .join("");
+}
+
+function renderLockList() {
+  const list = document.getElementById("lockList");
+  const rows = lockedRows();
+  if (rows.length === 0) {
+    list.innerHTML = '<li class="small">（目前沒有鎖定的格子）</li>';
+    return;
+  }
+  list.innerHTML = rows
+    .map((r, i) => `<li><span>${dateLabel(r.date)} ${r.slot}　${positionName(r.position_id)}：<b>${staffName(r.pt_id)}</b></span><button class="ghost-btn" onclick="removeLock(${i})">解除鎖定</button></li>`)
+    .join("");
+}
+
+// 模擬 Cynthia 在草稿上手動改一格：這個人這個時段原本的格子拿掉、換成鎖定的新格子。
+// 這時其他格子還沒重算（例如他原本的崗位會少一個人），要按「重排整週」才會重新組合。
+function addLock(ptId, date, slot, positionId) {
+  currentInput.currentWeekSchedule = currentInput.currentWeekSchedule.filter(
+    (r) => !(r.source === "manual" && r.pt_id === ptId && r.date === date && r.slot === slot)
+  );
+  currentInput.currentWeekSchedule.push({ date, slot, position_id: positionId, pt_id: ptId, priority: 1, source: "manual" });
+
+  if (lastResult) {
+    const edited = {
+      schedule: lastResult.schedule
+        .filter((r) => !(r.pt_id === ptId && r.date === date && r.slot === slot))
+        .concat([{ date, slot, position_id: positionId, position_name: positionName(positionId), pt_id: ptId, pt_name: staffName(ptId), priority: 1, source: "manual" }]),
+      warnings: lastResult.warnings,
+    };
+    renderSchedule(edited, new Set([`${date}|${slot}`]));
+    lastResult = edited;
+  }
+  renderLockList();
+  document.getElementById("lockHint").textContent =
+    `已把 ${staffName(ptId)} 在 ${dateLabel(date)} ${slot} 手動改到「${positionName(positionId)}」並鎖定（其他格子還沒重算，提醒清單也還是舊的），按「重排整週」讓系統重新組合。`;
+}
+
+function removeLock(index) {
+  const target = lockedRows()[index];
+  currentInput.currentWeekSchedule = currentInput.currentWeekSchedule.filter((r) => r !== target);
+  renderLockList();
+  document.getElementById("lockHint").textContent =
+    `已解除 ${staffName(target.pt_id)} 在 ${dateLabel(target.date)} ${target.slot} 的鎖定，按「重排整週」讓系統重新決定這一格。`;
+}
+
+function rerunWeek() {
+  const n = runAndRender(true);
+  document.getElementById("lockHint").textContent =
+    `已重排整週：鎖定的 ${lockedRows().length} 格維持不動，其他格子全部重新計算，有 ${n} 格跟重排前不一樣（黃框）。`;
+}
+
+// 情境(k) 的引導按鈕
+function demoLockStep() {
+  addLock("s8", WEEK_DATES[2], "上午出訂單後", "wholesale");
+}
+
+document.getElementById("addLockBtn").onclick = () => {
+  addLock(
+    document.getElementById("lockPerson").value,
+    document.getElementById("lockDate").value,
+    document.getElementById("lockSlot").value,
+    document.getElementById("lockPosition").value
+  );
+};
+document.getElementById("rerunBtn").onclick = rerunWeek;
 
 document.getElementById("applyAvailBtn").onclick = () => {
   const pt = document.getElementById("fpPerson").value;
@@ -632,11 +795,12 @@ document.getElementById("applyHeadcountBtn").onclick = () => {
 };
 
 document.getElementById("regenBtn").onclick = () => {
-  runAndRender();
+  runAndRender(false);
   document.getElementById("freeplayHint").textContent = "已重新產生班表。";
 };
 
 renderFreeplayOptions();
+renderLockOptions();
 renderAll();
 </script>
 </body>
