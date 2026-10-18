@@ -253,15 +253,17 @@
 // included_in_auto_schedule（自動排班是否納入考慮）這兩欄還沒真的 migrate 進資料庫，
 // 這裡先用假物件模擬欄位值；is_active 跟 position_slot_map（下面的 SLOT_MAP）
 // 才是資料庫裡已經真實存在的資料，數值照任務單給的真實值填。
+// default_backup_position_id（第四次補充決議）：目前唯一的備援是「撿貨 → 包裝」
+// （兩者都開在出訂單後）；印訂單、包裝、出箱貨原本的備援跟主要崗位不在同一個時段，改成不設。
 const POSITIONS = [
-  { id: "packing", name: "包裝", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "inbound", max_headcount: 4, is_active: true, included_in_auto_schedule: true, sort_order: 1 },
+  { id: "packing", name: "包裝", group: "出貨組", priority_day_bonus: true, default_backup_position_id: null, max_headcount: 4, is_active: true, included_in_auto_schedule: true, sort_order: 1 },
   { id: "picking", name: "撿貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "packing", max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 2 },
-  { id: "printer", name: "印訂單", group: "出貨組", priority_day_bonus: false, default_backup_position_id: "packing", max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 3 },
+  { id: "printer", name: "印訂單", group: "出貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 3 },
   { id: "inbound", name: "處理進貨", group: "進貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 4 },
   { id: "nopack", name: "無包裝出貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 5 },
   // 已停用：比照「停用崗位不排人」的既有規則，根本不會出現在 ctx.positions 裡
   { id: "groupbuy", name: "處理團購訂單", group: "進貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: false, included_in_auto_schedule: true, sort_order: 6 },
-  { id: "boxship", name: "出箱貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "inbound", max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 7 },
+  { id: "boxship", name: "出箱貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 7 },
   // 以下三個是「任務型崗位」（第二次補充決議）：有任務才需要排人，怎麼排還沒定案，
   // included_in_auto_schedule=false，自動排班完全跳過，不產生任何排班、也不產生警示
   { id: "wholesale", name: "處理批發訂單", group: "出貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: false, sort_order: 8 },
@@ -423,7 +425,7 @@ function baseInput(headcounts, overrides, specialDates, prevWeek) {
 const SCENARIOS = {
   a: {
     label: "(a) 正常的一週",
-    desc: "人力比較寬鬆的一週，用來先看演算法在<b>正常情況</b>下排出來的樣子：挑人順序、備援崗位怎麼運作。到了週五人力稍微吃緊、週六也會看到有人因為「本週已滿4天」被排除——這些都是正常現象，不是故障。也可以順便看到「處理團購訂單」（已停用）以及「處理批發訂單」「處理退貨」「盤點」三個任務型崗位完全沒出現在表格跟提醒裡，「出貨完成後」只剩處理進貨。",
+    desc: "人力比較寬鬆的一週，用來先看演算法在<b>正常情況</b>下排出來的樣子：挑人順序、備援崗位怎麼運作（目前唯一的備援是「撿貨 → 包裝」：撿貨的人在同一個時段做完撿貨後，再支援包裝，所以「包裝（備援）」只會出現在上午／下午出訂單後）。到了週五人力稍微吃緊、週六也會看到有人因為「本週已滿4天」被排除——這些都是正常現象，不是故障。也可以順便看到「處理團購訂單」（已停用）以及「處理批發訂單」「處理退貨」「盤點」三個任務型崗位完全沒出現在表格跟提醒裡，「出貨完成後」只剩處理進貨。",
     build: () => baseInput(RELAXED_HEADCOUNT, null, [], BALANCED_PREV_WEEK),
   },
   b: {
@@ -524,7 +526,7 @@ const SCENARIOS = {
     desc: "【第三次補充決議：手動調整 → 鎖定 → 重排整週】下面的班表是系統先排好的整週草稿。照著做：<br>" +
       "<button class=\"ghost-btn\" onclick=\"demoLockStep()\">步驟 1：把許庭瑄週三「上午出訂單後」從包裝抽去做「處理批發訂單」（手動、鎖定）</button>" +
       "<button class=\"primary-btn\" onclick=\"rerunWeek()\">步驟 2：重排整週</button><br>" +
-      "先看週三「上午出訂單後」那一格：原本是許庭瑄在包裝。按完步驟 1，那格會出現橘色的「許庭瑄（鎖定）」在處理批發訂單，包裝變成只剩備援、沒有人真正在做（模擬 Cynthia 剛手動改完、系統還沒重算的樣子）。按步驟 2 之後：鎖定的那格一字不動；包裝的空缺由當天原本沒排到工作的楊鎔慈補上；其他格子全部重新算過，跟步驟 1 畫面不一樣的格子會用黃框標出（這個例子只有這一格需要重組，因為當天有空的人夠多；人手比較緊的週，抽走一個人可能會連帶讓別的格子、甚至別天跟著換人）。處理批發訂單本身不納入自動排班，但被鎖定的這一格照樣算數：佔掉許庭瑄這個時段、算進崗位人數。也可以用下方「手動調整（鎖定）」區塊自己改別的格子、解除鎖定、再重排。",
+      "先看週三「上午出訂單後」那一格：原本是許庭瑄在包裝。按完步驟 1，那格會出現橘色的「許庭瑄（鎖定）」在處理批發訂單，包裝只剩撿貨同事掛的備援、沒有人真正在做（模擬 Cynthia 剛手動改完、系統還沒重算的樣子）。按步驟 2 之後：鎖定的那格一字不動；包裝的空缺由當天原本沒排到工作的楊鎔慈補上；其他格子全部重新算過，跟步驟 1 畫面不一樣的格子會用黃框標出（這個例子只有這一格需要重組，因為當天有空的人夠多；人手比較緊的週，抽走一個人可能會連帶讓別的格子、甚至別天跟著換人）。處理批發訂單本身不納入自動排班，但被鎖定的這一格照樣算數：佔掉許庭瑄這個時段、算進崗位人數。也可以用下方「手動調整（鎖定）」區塊自己改別的格子、解除鎖定、再重排。",
     build: () => baseInput(RELAXED_HEADCOUNT, null, [], BALANCED_PREV_WEEK),
   },
 };

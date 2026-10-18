@@ -708,7 +708,12 @@ function resolvePrinterForDate(rotation, date, ctx) {
 }
 
 // ----------------------------------------------------------------------------
-// 十三、備援（第二順位）指派（票2 決議第九條）
+// 十三、備援（第二順位）指派（票2 決議第九條＋票1 第四次補充決議）
+//
+// 備援一定在「同一個時段」：先做第一任務，做完才做備援。所以備援崗位必須是這個
+// 時段本來就有開的崗位（position_slot_map）；這個時段沒開的崗位不能當備援，直接
+// 不產生備援列（例如印訂單在「出訂單前」，包裝只開在「出訂單後」，就不能互為備援）。
+// 不納入自動排班的崗位（處理退貨等）不在 positionById 裡，也一律不會被當成備援。
 // ----------------------------------------------------------------------------
 
 function assignBackups(ctx, date, slot) {
@@ -720,6 +725,7 @@ function assignBackups(ctx, date, slot) {
     if (!position || !position.default_backup_position_id) continue;
     const backupPosition = ctx.positionById.get(position.default_backup_position_id);
     if (!backupPosition) continue;
+    if (!(ctx.slotsForPosition.get(backupPosition.id) || []).includes(slot)) continue;
 
     const level = getLevel(row.pt_id, backupPosition.id, ctx.abilities);
     if (level === 3) {
@@ -1216,9 +1222,8 @@ function generateWeekSchedule(input) {
         // 印單人這個時段被手動鎖在別的崗位時，印訂單留給下面的一般流程照基準人數補
       }
       const skip = printerHandledSlots.size > 0 ? new Set([printerPosition.id]) : new Set();
-      // assignSlot 內部在每個時段結束時都會呼叫一次 assignBackups()，印訂單的第一
-      // 任務列在這裡先寫進 ctx.scheduleRows，所以印訂單的備援（印訂單→包裝）
-      // 也會在對應時段被一併算到，不需要另外再跑一次（跑兩次會重複產生備援列）
+      // assignSlot 內部在每個時段結束時都會呼叫一次 assignBackups()，所以這裡不需要
+      // 另外再跑一次備援（跑兩次會重複產生備援列）
       for (const slot of SLOTS) {
         const slotSkip = printerHandledSlots.has(slot) ? new Set([printerPosition.id]) : new Set();
         assignSlot(ctx, date, slot, info.isPriority, info.extraHeadcount, slotSkip);
