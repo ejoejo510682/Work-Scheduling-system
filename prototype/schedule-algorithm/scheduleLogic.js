@@ -24,7 +24,6 @@ const WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"];
 
 const GROUP_SHIPPING = "出貨組";
 const GROUP_INBOUND = "進貨組";
-const GROUP_FLEX = "不固定";
 
 // ----------------------------------------------------------------------------
 // 二、日期工具（純函式，沿用 src/lib/date.ts 同樣「用字串處理日期」的作法，
@@ -208,7 +207,8 @@ function countLevel3(ptId, abilities, positionIds) {
 // ----------------------------------------------------------------------------
 
 // 【修正 4】崗位要先過濾 is_active（已停用，例如「處理團購訂單」）跟
-// included_in_auto_schedule（細節未定案、自動排班先完全跳過，例如「處理批發訂單」）。
+// included_in_auto_schedule（任務型崗位，怎麼排還沒定案、自動排班先完全跳過：
+// 目前是「處理批發訂單」「處理退貨」「盤點」三個）。
 // 過濾後的 positions 才是整個排班流程會用到的崗位清單，被濾掉的崗位從頭到尾不會
 // 出現在任何候選名單、目標人數、警示訊息裡，等於「單純當它不存在」。
 function buildContext(input) {
@@ -369,10 +369,10 @@ function isAvailableForSlotToday(ptId, date, slot, ctx) {
 }
 
 // ----------------------------------------------------------------------------
-// 十一、挑人順序主邏輯（票2 決議第六條）：
-//   step1：各組先用主要組別相符的人填
-//   step2：出貨仍缺 → 用「不固定」補（出貨優先日也可以用固定進貨組）
-//   step3：進貨仍缺 → 用「不固定」+ 排不進出貨崗位的出貨組人員補
+// 十一、挑人順序主邏輯（票1 第二次補充決議：取消「不固定」組別後的版本）：
+//   step1：各組先用主要組別相符的人填；同組內三級崗位多的先排
+//   step2：出貨仍缺 → 平常不補；只有出貨優先日才用進貨組的人補
+//   step3：進貨仍缺 → 用排不進出貨崗位的出貨組人員補
 //   step4：仍有剩餘 → 不排班，標示「人力過剩」（在每天結束後統一算）
 // ----------------------------------------------------------------------------
 
@@ -702,28 +702,21 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
     return sum + Math.max(0, inboundTargets.get(p.id) - filled);
   }, 0);
 
-  // step2：出貨仍缺 → 先用「不固定」的人補；出貨優先日時，固定進貨組的人也要
-  // 納入出貨組的挑人順序，但【修正 3】仍然要排在「不固定」之後（票0規則六第2點）。
-  // 所以這裡分成兩個獨立的候選池，填的時候也分兩階段呼叫 fillFromFlexPool：
-  // 不固定的人先盡量填，填不完才讓固定進貨組的人補剩下的缺口。
-  const shippingFlexCandidates = new Set(
-    buildEligiblePool(shippingPositions.map((p) => p.id), date, slot, ctx, null).filter(
-      (id) => ctx.activeStaff.find((s) => s.id === id).primary_group === GROUP_FLEX
-    )
-  );
-  const shippingPriorityInboundCandidates = isPriority
+  // step2：出貨仍缺 → 平常不補（出貨缺人就跳警示）；只有出貨優先日，才讓進貨組的
+  // 人補出貨缺口。進貨組的人此時已經先在 step1 填過自己的進貨崗位，剩下沒被排到的
+  // 才會進到這個候選池，所以等於「出貨組的人用完了，才輪到進貨組支援」。
+  const shippingInboundCandidates = isPriority
     ? new Set(
         buildEligiblePool(shippingPositions.map((p) => p.id), date, slot, ctx, null).filter(
           (id) => ctx.activeStaff.find((s) => s.id === id).primary_group === GROUP_INBOUND
         )
       )
     : new Set();
-  // step3：進貨仍缺 → 不固定的人 ＋ 排不進出貨崗位的出貨組人員
-  const inboundFlexCandidates = new Set(
-    buildEligiblePool(inboundPositions.map((p) => p.id), date, slot, ctx, null).filter((id) => {
-      const g = ctx.activeStaff.find((s) => s.id === id).primary_group;
-      return g === GROUP_FLEX || g === GROUP_SHIPPING;
-    })
+  // step3：進貨仍缺 → 排不進出貨崗位的出貨組人員
+  const inboundShippingCandidates = new Set(
+    buildEligiblePool(inboundPositions.map((p) => p.id), date, slot, ctx, null).filter(
+      (id) => ctx.activeStaff.find((s) => s.id === id).primary_group === GROUP_SHIPPING
+    )
   );
 
   let shipAllocation = shipGap;
@@ -731,11 +724,7 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
 
   if (weekday >= 2 && weekday <= 4) {
     // 週三～週五才套用「平均分攤」；人力足夠時不用砍，直接照 step2/step3 全部補滿
-    const combinedFlexSupply = new Set([
-      ...shippingFlexCandidates,
-      ...shippingPriorityInboundCandidates,
-      ...inboundFlexCandidates,
-    ]).size;
+    const combinedFlexSupply = new Set([...shippingInboundCandidates, ...inboundShippingCandidates]).size;
     const combinedGap = shipGap + inGap;
     if (shipGap > 0 && inGap > 0 && combinedFlexSupply < combinedGap) {
       // 只有「出貨、進貨兩邊都還缺人」且補不滿時，才需要平均分攤；
@@ -762,31 +751,12 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
     }
   }
 
-  const usedByFlex = fillFromFlexPool(
-    ctx,
-    date,
-    slot,
-    shippingPositions,
-    shippingTargets,
-    shippingFlexCandidates,
-    shipAllocation,
-    ctx.shippingPositionIds
-  );
-  // 【修正 3】不固定的人補不完，才讓出貨優先日的固定進貨組的人補剩下的缺口
-  fillFromFlexPool(
-    ctx,
-    date,
-    slot,
-    shippingPositions,
-    shippingTargets,
-    shippingPriorityInboundCandidates,
-    shipAllocation - usedByFlex,
-    ctx.shippingPositionIds
-  );
-  fillFromFlexPool(ctx, date, slot, inboundPositions, inboundTargets, inboundFlexCandidates, inAllocation, ctx.inboundPositionIds);
+  fillFromFlexPool(ctx, date, slot, shippingPositions, shippingTargets, shippingInboundCandidates, shipAllocation, ctx.shippingPositionIds);
+  fillFromFlexPool(ctx, date, slot, inboundPositions, inboundTargets, inboundShippingCandidates, inAllocation, ctx.inboundPositionIds);
 
   // 填完之後，再檢查一次還有沒有真正排不出來的缺口（非週三～週五的人手不足，或分攤後仍然不夠）
-  // 【補充決議】每個出貨崗位在它適用的時段裡至少要排到 1 人是硬性規則；這裡不用特別
+  // 【補充決議】每個出貨崗位在它適用的時段裡至少要排到 1 人是硬性規則（只適用平日，
+  // assignSlot 本來就只跑平日；週六走 assignSaturday 自己的 4 人規則）；這裡不用特別
   // 寫一條新判斷——只要該崗位的基準人數（target）設定正確（> 0），0 人自然就會落在
   // filled < target 的條件裡，照樣跳出「需要 X 人只排到 Y 人」的警示。
   for (const p of allActivePositions) {
@@ -805,8 +775,6 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
   assignBackups(ctx, date, slot);
 }
 
-// 回傳實際補進去的人數，讓呼叫端知道這個池子補了多少、還剩多少 allowance 可以讓
-// 下一階段的池子（例如【修正3】固定進貨組）接著補
 function fillFromFlexPool(ctx, date, slot, positions, targets, flexCandidateSet, allowance, groupPositionIds) {
   if (allowance <= 0) return 0;
   let remainingAllowance = allowance;
@@ -844,6 +812,10 @@ function assignSaturday(ctx, date, printerId) {
   const packingPosition = ctx.positions.find((p) => p.name === "包裝");
   const noPackagePosition = ctx.positions.find((p) => p.name === "無包裝出貨");
 
+  // 週六全部是出貨崗位，沿用挑人順序 step2：進貨組的人只有出貨優先日才能排出貨
+  const isPriority = isPriorityShippingDay(date, ctx.specialDates).isPriority;
+  const groupAllowed = (s) => s.primary_group === GROUP_SHIPPING || isPriority;
+
   // 正職：先印單（第一段），印完支援其他出貨崗位（後三段）
   let fullTimeId = printerId;
   if (fullTimeId) {
@@ -858,6 +830,7 @@ function assignSaturday(ctx, date, printerId) {
     const fallbackFullTime = ctx.activeStaff.find(
       (s) =>
         s.employment_type === "正職" &&
+        groupAllowed(s) &&
         isUnderWeeklyCap(s.id, s, ctx) &&
         isAvailableForSlotToday(s.id, date, SATURDAY_SLOTS[0], ctx) &&
         ctx.shippingPositionIds.some((pid) => getLevel(s.id, pid, ctx.abilities) >= 2)
@@ -882,6 +855,7 @@ function assignSaturday(ctx, date, printerId) {
     (s) =>
       s.employment_type === "PT" &&
       s.id !== fullTimeId &&
+      groupAllowed(s) &&
       isUnderWeeklyCap(s.id, s, ctx) &&
       isAvailableForSlotToday(s.id, date, SATURDAY_SLOTS[0], ctx) &&
       shippingPositionIds.some((pid) => getLevel(s.id, pid, ctx.abilities) >= 2)
@@ -945,7 +919,7 @@ function assignSaturday(ctx, date, printerId) {
 // 的崗位全部滿額），才留下明確的警示，交給人工處理。
 // ----------------------------------------------------------------------------
 
-function ensureFullTimeWorked(ctx, date, slots, skipPositionIds) {
+function ensureFullTimeWorked(ctx, date, slots, skipPositionIds, isPriority) {
   const skip = skipPositionIds || new Set();
   const fullTimers = ctx.activeStaff.filter((s) => s.employment_type === "正職");
 
@@ -966,7 +940,9 @@ function ensureFullTimeWorked(ctx, date, slots, skipPositionIds) {
           !skip.has(p.id) &&
           (ctx.slotsForPosition.get(p.id) || []).includes(slot) &&
           getLevel(s.id, p.id, ctx.abilities) >= 2 &&
-          hasCapacity(ctx, date, slot, p)
+          hasCapacity(ctx, date, slot, p) &&
+          // 挑人順序 step2：進貨組的人只有出貨優先日才能排出貨崗位，保底檢查也不例外
+          !(s.primary_group === GROUP_INBOUND && p.group === GROUP_SHIPPING && !isPriority)
       );
       if (candidatePositions.length === 0) continue;
 
@@ -1091,7 +1067,7 @@ function generateWeekSchedule(input) {
         assignSlot(ctx, date, slot, info.isPriority, info.extraHeadcount, skip);
       }
       // 【修正 1】正常流程跑完後，保底檢查今天所有正職是不是都真的被排到工作了
-      ensureFullTimeWorked(ctx, date, SLOTS, skip);
+      ensureFullTimeWorked(ctx, date, SLOTS, skip, info.isPriority);
     }
 
     // 更新本週已使用天數 + 算人力過剩
