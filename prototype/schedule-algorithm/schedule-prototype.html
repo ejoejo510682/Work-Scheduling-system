@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>排班演算法原型</title>
+<script src="./scheduleLogic.js"></script>
+<style>
+  :root {
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #e2e5ea;
+    --text: #1f2430;
+    --muted: #6b7280;
+    --ok: #16a34a;
+    --warn-bg: #fff7e6;
+    --warn-border: #f0c36d;
+    --danger-bg: #fdecec;
+    --danger-border: #e8a0a0;
+    --info-bg: #eef2ff;
+    --info-border: #c3cdf5;
+    --lvl1: #9aa0ab;
+    --lvl2: #d99a2b;
+    --lvl3: #1f9d55;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 0 0 10px; }
+  h3 { font-size: 15px; margin: 0 0 8px; }
+  .intro {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+  }
+  .intro p { margin: 6px 0; color: var(--text); }
+  .intro .q { color: var(--muted); font-size: 14px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .tab-btn {
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    padding: 9px 14px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    cursor: pointer;
+  }
+  .tab-btn:hover { border-color: var(--accent); }
+  .tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .scenario-desc {
+    background: var(--info-bg);
+    border: 1px solid var(--info-border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    font-size: 14px;
+  }
+  .scenario-desc b { color: var(--accent-dark); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+  }
+  .freeplay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin-bottom: 12px; }
+  .freeplay-grid label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+  .freeplay-grid select, .freeplay-grid input {
+    width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13.5px;
+  }
+  .primary-btn {
+    background: var(--accent); color: #fff; border: none; padding: 10px 18px;
+    border-radius: 8px; font-size: 14px; cursor: pointer;
+  }
+  .primary-btn:hover { background: var(--accent-dark); }
+  .ghost-btn {
+    background: transparent; color: var(--accent-dark); border: 1px solid var(--accent-dark);
+    padding: 9px 14px; border-radius: 8px; font-size: 13.5px; cursor: pointer;
+  }
+  table.schedule { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.schedule th, table.schedule td {
+    border: 1px solid var(--border); padding: 7px 8px; text-align: left; vertical-align: top;
+  }
+  table.schedule th { background: #f0f2f6; font-weight: 600; white-space: nowrap; }
+  table.schedule td.slotcol { white-space: nowrap; font-weight: 600; background: #fafbfc; color: var(--muted); }
+  .pos-line { margin: 2px 0; }
+  .pos-name { color: var(--muted); }
+  .person { display: inline-block; background: #eef2ff; border-radius: 5px; padding: 1px 6px; margin: 1px 2px 1px 0; font-size: 12.3px; }
+  .person.backup { background: #f3f4f6; color: var(--muted); border: 1px dashed #c7cbd4; }
+  .day-head { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .empty-cell { color: #c2c6cc; }
+  .warn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .warn-item {
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; border: 1px solid transparent;
+  }
+  .warn-shortage { background: var(--danger-bg); border-color: var(--danger-border); }
+  .warn-surplus { background: var(--warn-bg); border-color: var(--warn-border); }
+  .warn-missing_availability { background: var(--warn-bg); border-color: var(--warn-border); }
+  .warn-priority_day { background: var(--info-bg); border-color: var(--info-border); }
+  .warn-info { background: #f3f4f6; border-color: #dadde2; color: var(--muted); }
+  .legend { display: flex; gap: 14px; font-size: 12.5px; color: var(--muted); margin-top: 10px; flex-wrap: wrap; }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  .two-col { display: grid; grid-template-columns: 2.1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+  .small { font-size: 12.5px; color: var(--muted); }
+  .footer-note { font-size: 12px; color: var(--muted); margin-top: 24px; }
+  code { background: #eef0f4; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="intro">
+    <h1>排班演算法原型 — GitHub issue #4</h1>
+    <p class="q">
+      這個頁面要回答的問題：「每週排班規則」能不能寫成一套可以自動跑的演算法？
+      各規則先後順序對不對、規則互相衝突時該讓誰優先、人力真的不夠時要怎麼降級、
+      而且要能明確告訴 Cynthia「這週哪裡有問題」。
+    </p>
+    <p class="small">
+      下面所有名字、人數、能力都是<b>假資料</b>，只是用來測試排班邏輯是否合理，
+      不是公司目前真正的班表。點選下方分頁可以看幾種「刁鑽情境」的示範，
+      或往下拉到「自由調整」區塊自己試著改資料看看結果會怎麼變。
+    </p>
+  </div>
+
+  <div class="tabs" id="tabBar"></div>
+  <div class="scenario-desc" id="scenarioDesc"></div>
+
+  <div class="panel">
+    <h3>自由調整（改完按「重新產生班表」）</h3>
+    <div class="freeplay-grid">
+      <div>
+        <label>調整某人某天的可上班範圍</label>
+        <select id="fpPerson"></select>
+      </div>
+      <div>
+        <label>哪一天</label>
+        <select id="fpDate"></select>
+      </div>
+      <div>
+        <label>範圍</label>
+        <select id="fpRange">
+          <option value="全天">全天</option>
+          <option value="只上午">只上午</option>
+          <option value="只下午">只下午</option>
+          <option value="全天休假">全天休假</option>
+        </select>
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <button class="ghost-btn" id="applyAvailBtn">套用這項可上班調整</button>
+      </div>
+    </div>
+    <div class="freeplay-grid">
+      <div>
+        <label>把哪一天標成出貨優先日（電商檔期）</label>
+        <select id="fpPriorityDate"></select>
+      </div>
+      <div>
+        <label>這天加人數（空白＝預設 +1）</label>
+        <input id="fpExtraHeadcount" type="number" min="0" placeholder="預設 +1" />
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <button class="ghost-btn" id="applyPriorityBtn">套用出貨優先日設定</button>
+      </div>
+      <div>
+        <label>調整崗位基準人數</label>
+        <select id="fpPosition"></select>
+      </div>
+      <div>
+        <label>人數</label>
+        <input id="fpHeadcount" type="number" min="0" />
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <button class="ghost-btn" id="applyHeadcountBtn">套用人數調整</button>
+      </div>
+    </div>
+    <button class="primary-btn" id="regenBtn">重新產生班表</button>
+    <span class="small" id="freeplayHint" style="margin-left:10px;"></span>
+  </div>
+
+  <div class="two-col">
+    <div class="panel">
+      <h2>這一週的班表</h2>
+      <div id="scheduleContainer"></div>
+      <div class="legend">
+        <span><span class="dot" style="background:#eef2ff;border:1px solid #c7cbd4;"></span>第一任務</span>
+        <span><span class="dot" style="background:#f3f4f6;border:1px dashed #c7cbd4;"></span>備援（第二任務）</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>草稿提醒</h2>
+      <ul class="warn-list" id="warnList"></ul>
+    </div>
+  </div>
+
+  <p class="footer-note">
+    純邏輯模組在 <code>scheduleLogic.js</code>（跟這個 HTML 放在同一個資料夾），
+    純函式、沒有畫面邏輯，日後驗證沒問題可以直接搬進正式專案的 <code>src/lib/</code>。
+    這個 HTML 頁面本身是原型用的畫面，不會進正式專案。
+  </p>
+</div>
+
+<script>
+"use strict";
+
+// ============================================================================
+// 假資料：7 個崗位、11 位在職人員，數字跟能力都是為了測試情境而捏造的
+// ============================================================================
+
+const POSITIONS = [
+  { id: "picking", name: "撿貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "packing", sort_order: 1 },
+  { id: "packing", name: "包裝", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "inbound", sort_order: 2 },
+  { id: "printer", name: "印訂單", group: "出貨組", priority_day_bonus: false, default_backup_position_id: "packing", sort_order: 3 },
+  { id: "nopack", name: "無包裝出貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: null, sort_order: 4 },
+  { id: "boxship", name: "出箱貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "inbound", sort_order: 5 },
+  { id: "groupbuy", name: "處理團購訂單", group: "進貨組", priority_day_bonus: false, default_backup_position_id: null, sort_order: 6 },
+  { id: "inbound", name: "處理進貨", group: "進貨組", priority_day_bonus: false, default_backup_position_id: null, sort_order: 7 },
+];
+
+// 基準人數：撿貨3・包裝2・印訂單1・無包裝出貨2・出箱貨2・處理團購訂單1・處理進貨2（跟公司目前實際基準一致）
+const REAL_HEADCOUNT = [
+  { position_id: "picking", headcount: 3 }, { position_id: "packing", headcount: 2 },
+  { position_id: "printer", headcount: 1 }, { position_id: "nopack", headcount: 2 },
+  { position_id: "boxship", headcount: 2 }, { position_id: "groupbuy", headcount: 1 },
+  { position_id: "inbound", headcount: 2 },
+];
+// 快樂路徑示範用的版本：基準稍微調低，才有多餘人力空間，方便先看「演算法正常運作」的樣子
+// （用公司目前真實人數去跑，6 位 PT＋4 天上限，光平日就會吃緊，那個張力留給情境(c)(d)專門呈現）
+const RELAXED_HEADCOUNT = [
+  { position_id: "picking", headcount: 2 }, { position_id: "packing", headcount: 1 },
+  { position_id: "printer", headcount: 1 }, { position_id: "nopack", headcount: 1 },
+  { position_id: "boxship", headcount: 1 }, { position_id: "groupbuy", headcount: 1 },
+  { position_id: "inbound", headcount: 2 },
+];
+
+const SLOT_MAP = [
+  { position_id: "picking", slot: "上午出訂單後" }, { position_id: "picking", slot: "下午出訂單後" },
+  { position_id: "packing", slot: "上午出訂單後" }, { position_id: "packing", slot: "下午出訂單後" },
+  { position_id: "printer", slot: "上午出訂單前" }, { position_id: "printer", slot: "下午出訂單前" },
+  { position_id: "nopack", slot: "下午出訂單後" },
+  { position_id: "boxship", slot: "上午出訂單後" }, { position_id: "boxship", slot: "下午出訂單後" },
+  // 處理團購訂單「不綁固定時段、彈性佔用半天」，這個原型簡化成固定佔用「上午」半天
+  { position_id: "groupbuy", slot: "上午出訂單前" }, { position_id: "groupbuy", slot: "上午出訂單後" },
+  { position_id: "inbound", slot: "上午出訂單前" }, { position_id: "inbound", slot: "下午出訂單前" }, { position_id: "inbound", slot: "出貨完成後" },
+];
+
+const STAFF = [
+  { id: "s1", name: "李睿懷", employment_type: "PT", primary_group: "出貨組", is_active: true },
+  { id: "s2", name: "林清瑞", employment_type: "PT", primary_group: "出貨組", is_active: true },
+  { id: "s3", name: "楊鎔慈", employment_type: "PT", primary_group: "出貨組", is_active: true },
+  { id: "s4", name: "葉翠茹", employment_type: "PT", primary_group: "出貨組", is_active: true },
+  { id: "s5", name: "陳語姍", employment_type: "PT", primary_group: "出貨組", is_active: true },
+  { id: "s6", name: "黃依婷", employment_type: "PT", primary_group: "出貨組", is_active: true },
+  { id: "s7", name: "王瀞玉", employment_type: "正職", primary_group: "出貨組", is_active: true },
+  { id: "s8", name: "許庭瑄", employment_type: "正職", primary_group: "出貨組", is_active: true },
+  { id: "s9", name: "黃盈珊", employment_type: "正職", primary_group: "出貨組", is_active: true },
+  { id: "s10", name: "連陳軒", employment_type: "正職", primary_group: "進貨組", is_active: true },
+  { id: "s11", name: "李玄鳳", employment_type: "PT", primary_group: "進貨組", is_active: true },
+];
+
+function ab(pt_id, position_id, level) { return { pt_id, position_id, level }; }
+const ABILITIES = [
+  ...[["s1","picking",3],["s1","packing",3],["s1","printer",3],["s1","boxship",2],["s1","nopack",3]].map(a=>ab(...a)),
+  ...[["s2","picking",3],["s2","packing",2],["s2","boxship",3],["s2","nopack",2],["s2","inbound",2]].map(a=>ab(...a)),
+  ...[["s3","printer",3],["s3","picking",2],["s3","packing",3],["s3","groupbuy",3],["s3","boxship",2]].map(a=>ab(...a)),
+  ...[["s4","picking",2],["s4","packing",2],["s4","nopack",3],["s4","boxship",2]].map(a=>ab(...a)),
+  ...[["s5","picking",3],["s5","boxship",3],["s5","packing",2],["s5","nopack",2]].map(a=>ab(...a)),
+  ...[["s6","picking",2],["s6","packing",2],["s6","nopack",3],["s6","boxship",2]].map(a=>ab(...a)),
+  ...[["s7","printer",3],["s7","picking",3],["s7","packing",3],["s7","boxship",3],["s7","nopack",3]].map(a=>ab(...a)),
+  ...[["s8","picking",3],["s8","packing",3],["s8","boxship",3],["s8","nopack",3],["s8","printer",2]].map(a=>ab(...a)),
+  ...[["s9","picking",3],["s9","packing",2],["s9","boxship",3],["s9","nopack",2]].map(a=>ab(...a)),
+  ...[["s10","inbound",3],["s10","groupbuy",3]].map(a=>ab(...a)),
+  ...[["s11","inbound",3],["s11","groupbuy",2]].map(a=>ab(...a)),
+];
+
+const WEEK_START = "2026-10-19"; // 本週一
+const WEEK_DATES = ScheduleLogic.getWeekDates(WEEK_START).slice(0, 6); // 一～六，不含週日
+const PREV_WEEK_START = "2026-10-12";
+
+function dateLabel(d) {
+  const [y, m, day] = d.split("-").map(Number);
+  const idx = WEEK_DATES.indexOf(d);
+  const wd = ["一","二","三","四","五","六"][idx] || "";
+  return `${m}/${day}（${wd}）`;
+}
+
+function fullAvailability(overrides) {
+  const rows = [];
+  for (const s of STAFF) {
+    for (const d of WEEK_DATES) {
+      const o = overrides && overrides[s.id] && overrides[s.id][d];
+      rows.push({ pt_id: s.id, date: d, range: o || "全天" });
+    }
+  }
+  return rows;
+}
+
+const BALANCED_PREV_WEEK = [
+  { position_id: "printer", position_name: "印訂單", pt_id: "s3", priority: 1, date: "2026-10-12" },
+  { position_id: "printer", position_name: "印訂單", pt_id: "s3", priority: 1, date: "2026-10-13" },
+  { position_id: "printer", position_name: "印訂單", pt_id: "s1", priority: 1, date: "2026-10-14" },
+];
+
+function cloneInput(input) { return JSON.parse(JSON.stringify(input)); }
+
+function baseInput(headcounts, overrides, specialDates, prevWeek) {
+  return {
+    weekStart: WEEK_START,
+    positions: POSITIONS,
+    staff: STAFF,
+    abilities: ABILITIES,
+    headcounts: headcounts,
+    slotMap: SLOT_MAP,
+    availability: fullAvailability(overrides),
+    specialDates: specialDates || [],
+    previousWeekSchedule: prevWeek || BALANCED_PREV_WEEK,
+  };
+}
+
+// ============================================================================
+// 5 個引導情境
+// ============================================================================
+
+const SCENARIOS = {
+  a: {
+    label: "(a) 正常的一週",
+    desc: "人力比較寬鬆的一週，用來先看演算法在<b>正常情況</b>下排出來的樣子：挑人順序、備援崗位怎麼運作。到了週五人力稍微吃緊、週六也會看到有人因為「本週已滿4天」被排除——這些都是正常現象，不是故障。",
+    build: () => baseInput(RELAXED_HEADCOUNT, null, [], BALANCED_PREV_WEEK),
+  },
+  b: {
+    label: "(b) 出貨優先日",
+    desc: "把週一標成電商檔期促銷日（加人數設定為 +2），看撿貨/包裝/無包裝出貨/出箱貨的基準人數怎麼被拉高，以及備援崗位（印訂單→包裝、撿貨→包裝…）怎麼一起運作。這次示範也讓「出箱貨」在人力被加成後完全排不進去——這提醒了「基準人數相同的崗位之間，加人時該怎麼排序」也是值得之後討論的細節。",
+    build: () => baseInput(RELAXED_HEADCOUNT, null, [
+      { date: WEEK_DATES[0], type: "電商檔期", name: "雙11加班", extra_headcount: 2 },
+    ], BALANCED_PREV_WEEK),
+  },
+  c: {
+    label: "(c) PT 4 天上限排除",
+    desc: "故意讓林清瑞、楊鎔慈、葉翠茹、陳語姍這幾位 PT 週一～週四請假，逼得黃依婷跟李睿懷連上 4 天。請注意看週五、週六：即使他們當天仍登記「全天可上班」，系統也會把他們排除，並在提醒裡明確寫出「已達 4 天上限」。",
+    build: () => {
+      const offDays = WEEK_DATES.slice(0, 4);
+      const overrides = {};
+      for (const id of ["s2", "s3", "s4", "s5"]) {
+        overrides[id] = {};
+        for (const d of offDays) overrides[id][d] = "全天休假";
+      }
+      return baseInput(RELAXED_HEADCOUNT, overrides, [], BALANCED_PREV_WEEK);
+    },
+  },
+  d: {
+    label: "(d) 人手不足、平均分攤",
+    desc: "週三讓所有印訂單合格的人（李睿懷、楊鎔慈、王瀞玉、許庭瑄）跟兩位進貨專員（連陳軒、李玄鳳）同時請假，製造出貨、進貨同時缺人的情況。觀察警告裡「兩邊平均分攤可動用人力」的訊息，以及印訂單當天真的排不出來、需要人工處理的警示。",
+    build: () => {
+      const wed = WEEK_DATES[2];
+      const overrides = {};
+      for (const id of ["s1", "s3", "s7", "s8", "s10", "s11"]) overrides[id] = { [wed]: "全天休假" };
+      return baseInput(RELAXED_HEADCOUNT, overrides, [], BALANCED_PREV_WEEK);
+    },
+  },
+  e: {
+    label: "(e) 印單輪排讀上週資料",
+    desc: "上週印訂單 PT 班次：李睿懷排了 2 天、楊鎔慈排了 1 天。照規則「上週拿 2 天的人這週拿 1 天」，這週應該反過來：楊鎔慈這週拿 2 天、李睿懷只拿 1 天。觀察週三、週四會不會換成楊鎔慈，以及週五原本要給李睿懷的 1 天，又因為他當週已經排滿 4 天上限，被自動換成正職王瀞玉頂上——兩條規則同時生效的實例。",
+    build: () => baseInput(RELAXED_HEADCOUNT, null, [], [
+      { position_id: "printer", position_name: "印訂單", pt_id: "s1", priority: 1, date: "2026-10-12" },
+      { position_id: "printer", position_name: "印訂單", pt_id: "s1", priority: 1, date: "2026-10-13" },
+      { position_id: "printer", position_name: "印訂單", pt_id: "s3", priority: 1, date: "2026-10-14" },
+    ]),
+  },
+};
+
+// ============================================================================
+// 畫面邏輯（這整個 <script> 區塊以下都是原型用的畫面，不是要搬進正式專案的東西）
+// ============================================================================
+
+let currentInput = SCENARIOS.a.build();
+let activeTabKey = "a";
+
+function staffName(id) { const s = STAFF.find((x) => x.id === id); return s ? s.name : id; }
+function positionName(id) { const p = POSITIONS.find((x) => x.id === id); return p ? p.name : id; }
+
+function renderTabs() {
+  const bar = document.getElementById("tabBar");
+  bar.innerHTML = "";
+  for (const key of Object.keys(SCENARIOS)) {
+    const btn = document.createElement("button");
+    btn.className = "tab-btn" + (key === activeTabKey ? " active" : "");
+    btn.textContent = SCENARIOS[key].label;
+    btn.onclick = () => {
+      activeTabKey = key;
+      currentInput = SCENARIOS[key].build();
+      renderAll();
+    };
+    bar.appendChild(btn);
+  }
+  document.getElementById("scenarioDesc").innerHTML =
+    "<b>" + SCENARIOS[activeTabKey].label + "：</b>" + SCENARIOS[activeTabKey].desc;
+}
+
+function renderFreeplayOptions() {
+  const personSel = document.getElementById("fpPerson");
+  personSel.innerHTML = STAFF.map((s) => `<option value="${s.id}">${s.name}（${s.employment_type}）</option>`).join("");
+  const dateSel = document.getElementById("fpDate");
+  dateSel.innerHTML = WEEK_DATES.map((d) => `<option value="${d}">${dateLabel(d)}</option>`).join("");
+  const prioritySel = document.getElementById("fpPriorityDate");
+  prioritySel.innerHTML = WEEK_DATES.slice(0, 5).map((d) => `<option value="${d}">${dateLabel(d)}</option>`).join("");
+  const posSel = document.getElementById("fpPosition");
+  posSel.innerHTML = POSITIONS.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+}
+
+function renderSchedule(result) {
+  const container = document.getElementById("scheduleContainer");
+  const table = document.createElement("table");
+  table.className = "schedule";
+
+  const thead = document.createElement("tr");
+  thead.appendChild(document.createElement("th"));
+  for (const d of WEEK_DATES) {
+    const th = document.createElement("th");
+    th.innerHTML = dateLabel(d);
+    thead.appendChild(th);
+  }
+  table.appendChild(thead);
+
+  for (const slot of ScheduleLogic.SLOTS) {
+    const tr = document.createElement("tr");
+    const slotTd = document.createElement("td");
+    slotTd.className = "slotcol";
+    slotTd.textContent = slot;
+    tr.appendChild(slotTd);
+
+    for (const d of WEEK_DATES) {
+      const td = document.createElement("td");
+      const rows = result.schedule.filter((r) => r.date === d && r.slot === slot);
+      if (rows.length === 0) {
+        td.innerHTML = '<span class="empty-cell">—</span>';
+      } else {
+        const byPos = {};
+        for (const r of rows) {
+          byPos[r.position_name] = byPos[r.position_name] || [];
+          byPos[r.position_name].push(r);
+        }
+        td.innerHTML = Object.entries(byPos)
+          .map(([posName, items]) => {
+            const chips = items
+              .map((r) => `<span class="person${r.priority === 2 ? " backup" : ""}">${r.pt_name}${r.priority === 2 ? "（備援）" : ""}</span>`)
+              .join("");
+            return `<div class="pos-line"><span class="pos-name">${posName}：</span>${chips}</div>`;
+          })
+          .join("");
+      }
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  container.innerHTML = "";
+  container.appendChild(table);
+}
+
+const WARNING_LABEL = {
+  shortage: "人手不足",
+  surplus: "人力過剩",
+  missing_availability: "未登記可上班時間",
+  priority_day: "出貨優先日",
+  info: "提示",
+};
+
+// 警告訊息裡的日期是 YYYY-MM-DD（純邏輯模組用的格式），畫面上照專案慣例顯示成 YYYY/MM/DD
+function prettyDatesInText(text) {
+  return text.replace(/\d{4}-\d{2}-\d{2}/g, (m) => m.replace(/-/g, "/"));
+}
+
+function renderWarnings(result) {
+  const list = document.getElementById("warnList");
+  if (result.warnings.length === 0) {
+    list.innerHTML = '<li class="small">這次沒有任何提醒。</li>';
+    return;
+  }
+  list.innerHTML = result.warnings
+    .map((w) => `<li class="warn-item warn-${w.type}"><b>[${WARNING_LABEL[w.type] || w.type}]</b> ${prettyDatesInText(w.message)}</li>`)
+    .join("");
+}
+
+function runAndRender() {
+  const result = ScheduleLogic.generateWeekSchedule(currentInput);
+  renderSchedule(result);
+  renderWarnings(result);
+}
+
+function renderAll() {
+  renderTabs();
+  runAndRender();
+}
+
+document.getElementById("applyAvailBtn").onclick = () => {
+  const pt = document.getElementById("fpPerson").value;
+  const date = document.getElementById("fpDate").value;
+  const range = document.getElementById("fpRange").value;
+  const row = currentInput.availability.find((a) => a.pt_id === pt && a.date === date);
+  if (row) row.range = range;
+  else currentInput.availability.push({ pt_id: pt, date, range });
+  document.getElementById("freeplayHint").textContent =
+    `已設定 ${staffName(pt)} 在 ${dateLabel(date)} 的可上班範圍為「${range}」，按「重新產生班表」套用。`;
+};
+
+document.getElementById("applyPriorityBtn").onclick = () => {
+  const date = document.getElementById("fpPriorityDate").value;
+  const extraRaw = document.getElementById("fpExtraHeadcount").value;
+  const extra = extraRaw === "" ? null : Number(extraRaw);
+  currentInput.specialDates = currentInput.specialDates.filter((s) => s.date !== date);
+  currentInput.specialDates.push({ date, type: "電商檔期", name: "自訂出貨優先日", extra_headcount: extra });
+  document.getElementById("freeplayHint").textContent =
+    `已把 ${dateLabel(date)} 設為出貨優先日（加人數：${extra === null ? "預設 +1" : extra}），按「重新產生班表」套用。`;
+};
+
+document.getElementById("applyHeadcountBtn").onclick = () => {
+  const posId = document.getElementById("fpPosition").value;
+  const n = Number(document.getElementById("fpHeadcount").value);
+  const row = currentInput.headcounts.find((h) => h.position_id === posId);
+  if (row) row.headcount = n;
+  document.getElementById("freeplayHint").textContent =
+    `已把「${positionName(posId)}」的基準人數改成 ${n} 人，按「重新產生班表」套用。`;
+};
+
+document.getElementById("regenBtn").onclick = () => {
+  runAndRender();
+  document.getElementById("freeplayHint").textContent = "已重新產生班表。";
+};
+
+renderFreeplayOptions();
+renderAll();
+</script>
+</body>
+</html>
