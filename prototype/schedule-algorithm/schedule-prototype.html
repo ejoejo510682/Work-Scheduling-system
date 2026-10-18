@@ -216,44 +216,84 @@
 "use strict";
 
 // ============================================================================
-// 假資料：7 個崗位、11 位在職人員，數字跟能力都是為了測試情境而捏造的
+// 假資料：10 個崗位（真實資料庫目前的 10 個崗位，含 2 個不納入自動排班的）、
+// 12 位在職人員，數字跟能力都是為了測試情境而捏造的
 // ============================================================================
 
+// 【修正 4】positions 改成真實的 10 個崗位。is_active（已停用）跟
+// included_in_auto_schedule（自動排班是否納入考慮）這兩欄還沒真的 migrate 進資料庫，
+// 這裡先用假物件模擬欄位值；is_active 跟 position_slot_map（下面的 SLOT_MAP）
+// 才是資料庫裡已經真實存在的資料，數值照任務單給的真實值填。
 const POSITIONS = [
-  { id: "picking", name: "撿貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "packing", sort_order: 1 },
-  { id: "packing", name: "包裝", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "inbound", sort_order: 2 },
-  { id: "printer", name: "印訂單", group: "出貨組", priority_day_bonus: false, default_backup_position_id: "packing", sort_order: 3 },
-  { id: "nopack", name: "無包裝出貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: null, sort_order: 4 },
-  { id: "boxship", name: "出箱貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "inbound", sort_order: 5 },
-  { id: "groupbuy", name: "處理團購訂單", group: "進貨組", priority_day_bonus: false, default_backup_position_id: null, sort_order: 6 },
-  { id: "inbound", name: "處理進貨", group: "進貨組", priority_day_bonus: false, default_backup_position_id: null, sort_order: 7 },
+  { id: "packing", name: "包裝", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "inbound", max_headcount: 4, is_active: true, included_in_auto_schedule: true, sort_order: 1 },
+  { id: "picking", name: "撿貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "packing", max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 2 },
+  { id: "printer", name: "印訂單", group: "出貨組", priority_day_bonus: false, default_backup_position_id: "packing", max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 3 },
+  { id: "inbound", name: "處理進貨", group: "進貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 4 },
+  { id: "nopack", name: "無包裝出貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 5 },
+  // 已停用：比照「停用崗位不排人」的既有規則，根本不會出現在 ctx.positions 裡
+  { id: "groupbuy", name: "處理團購訂單", group: "進貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: false, included_in_auto_schedule: true, sort_order: 6 },
+  { id: "boxship", name: "出箱貨", group: "出貨組", priority_day_bonus: true, default_backup_position_id: "inbound", max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 7 },
+  // 偶發任務，怎麼排還沒定案：included_in_auto_schedule=false，自動排班完全跳過
+  { id: "wholesale", name: "處理批發訂單", group: "出貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: false, sort_order: 8 },
+  // 只有正職能排：靠「沒能力記錄＝一級」自然擋掉 PT，不用額外寫規則（見下面 ABILITIES）
+  { id: "return", name: "處理退貨", group: "出貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 9 },
+  { id: "stocktake", name: "盤點", group: "出貨組", priority_day_bonus: false, default_backup_position_id: null, max_headcount: null, is_active: true, included_in_auto_schedule: true, sort_order: 10 },
 ];
 
-// 基準人數：撿貨3・包裝2・印訂單1・無包裝出貨2・出箱貨2・處理團購訂單1・處理進貨2（跟公司目前實際基準一致）
+// 基準人數（position_headcount）：照任務單給的真實值
 const REAL_HEADCOUNT = [
-  { position_id: "picking", headcount: 3 }, { position_id: "packing", headcount: 2 },
-  { position_id: "printer", headcount: 1 }, { position_id: "nopack", headcount: 2 },
-  { position_id: "boxship", headcount: 2 }, { position_id: "groupbuy", headcount: 1 },
-  { position_id: "inbound", headcount: 2 },
+  { position_id: "packing", headcount: 2 }, { position_id: "picking", headcount: 3 },
+  { position_id: "printer", headcount: 1 }, { position_id: "inbound", headcount: 2 },
+  { position_id: "nopack", headcount: 2 }, { position_id: "groupbuy", headcount: 1 },
+  { position_id: "boxship", headcount: 2 }, { position_id: "wholesale", headcount: 2 },
+  { position_id: "return", headcount: 2 }, { position_id: "stocktake", headcount: 2 },
 ];
 // 快樂路徑示範用的版本：基準稍微調低，才有多餘人力空間，方便先看「演算法正常運作」的樣子
-// （用公司目前真實人數去跑，6 位 PT＋4 天上限，光平日就會吃緊，那個張力留給情境(c)(d)專門呈現）
+// （用公司目前真實人數去跑，6 位 PT＋4 天上限，光平日就會吃緊，那個張力留給情境(d)(e)專門呈現）
 const RELAXED_HEADCOUNT = [
-  { position_id: "picking", headcount: 2 }, { position_id: "packing", headcount: 1 },
-  { position_id: "printer", headcount: 1 }, { position_id: "nopack", headcount: 1 },
-  { position_id: "boxship", headcount: 1 }, { position_id: "groupbuy", headcount: 1 },
-  { position_id: "inbound", headcount: 2 },
+  { position_id: "packing", headcount: 1 }, { position_id: "picking", headcount: 2 },
+  { position_id: "printer", headcount: 1 }, { position_id: "inbound", headcount: 2 },
+  { position_id: "nopack", headcount: 1 }, { position_id: "groupbuy", headcount: 1 },
+  { position_id: "boxship", headcount: 1 }, { position_id: "wholesale", headcount: 2 },
+  { position_id: "return", headcount: 1 }, { position_id: "stocktake", headcount: 1 },
 ];
-
+// 情境(b) 專用：刻意把包裝的基準人數設成全場最高，這樣「同一時段內先補哪個崗位」
+// 的既有排序（基準人數高的先補）才會先輪到包裝，才能示範出「候選人手明明充足，
+// 但包裝硬是停在 4 人上限」——如果用 RELAXED_HEADCOUNT（撿貨基準比包裝高），撿貨
+// 會先把候選池全部用光，包裝反而完全排不到人，沒辦法測到上限，而不是真的被擋在
+// 上限。這個「同基準／不同基準崗位間先補誰」的排序問題本身不是這次要修的 bug。
+const PACKING_CAP_HEADCOUNT = [
+  { position_id: "packing", headcount: 3 }, { position_id: "picking", headcount: 1 },
+  { position_id: "printer", headcount: 1 }, { position_id: "inbound", headcount: 2 },
+  { position_id: "nopack", headcount: 1 }, { position_id: "groupbuy", headcount: 1 },
+  { position_id: "boxship", headcount: 1 }, { position_id: "wholesale", headcount: 2 },
+  { position_id: "return", headcount: 1 }, { position_id: "stocktake", headcount: 1 },
+];
+// 情境(g) 專用：把每個崗位的基準人數都壓到最低（大多只要 1 人），同時把黃盈珊在
+// 撿貨／包裝／出箱貨／無包裝出貨／處理退貨的能力刻意從三級調弱成二級——其他正職、
+// 多位 PT 在這些崗位都還是三級。這樣「正常排班流程」每個崗位都會被三級的同事先搶
+// 走僅有的 1 個名額，黃盈珊二級的身份永遠排不進候選名單，整天可能一個崗位都分不到
+// （這正是舊版漏洞實際會發生的情況，不是憑空想像）。用這組資料實測過：拿掉
+// ensureFullTimeWorked 保底檢查的話，黃盈珊週一到週五都會變成 0 崗位、被誤判人力過剩。
+const FULLTIME_GUARANTEE_HEADCOUNT = [
+  { position_id: "packing", headcount: 1 }, { position_id: "picking", headcount: 1 },
+  { position_id: "printer", headcount: 1 }, { position_id: "inbound", headcount: 2 },
+  { position_id: "nopack", headcount: 1 }, { position_id: "groupbuy", headcount: 1 },
+  { position_id: "boxship", headcount: 1 }, { position_id: "wholesale", headcount: 2 },
+  { position_id: "return", headcount: 1 }, { position_id: "stocktake", headcount: 1 },
+];
+// 【修正 4】position_slot_map 改成真實資料：每個崗位只適用特定時段，不是隨便套 4 個時段
 const SLOT_MAP = [
-  { position_id: "picking", slot: "上午出訂單後" }, { position_id: "picking", slot: "下午出訂單後" },
   { position_id: "packing", slot: "上午出訂單後" }, { position_id: "packing", slot: "下午出訂單後" },
+  { position_id: "picking", slot: "上午出訂單後" }, { position_id: "picking", slot: "下午出訂單後" },
   { position_id: "printer", slot: "上午出訂單前" }, { position_id: "printer", slot: "下午出訂單前" },
-  { position_id: "nopack", slot: "下午出訂單後" },
-  { position_id: "boxship", slot: "上午出訂單後" }, { position_id: "boxship", slot: "下午出訂單後" },
-  // 處理團購訂單「不綁固定時段、彈性佔用半天」，這個原型簡化成固定佔用「上午」半天
-  { position_id: "groupbuy", slot: "上午出訂單前" }, { position_id: "groupbuy", slot: "上午出訂單後" },
   { position_id: "inbound", slot: "上午出訂單前" }, { position_id: "inbound", slot: "下午出訂單前" }, { position_id: "inbound", slot: "出貨完成後" },
+  { position_id: "nopack", slot: "下午出訂單後" },
+  { position_id: "groupbuy", slot: "上午出訂單後" }, { position_id: "groupbuy", slot: "下午出訂單後" },
+  { position_id: "boxship", slot: "上午出訂單後" }, { position_id: "boxship", slot: "下午出訂單後" },
+  { position_id: "wholesale", slot: "上午出訂單後" }, { position_id: "wholesale", slot: "下午出訂單後" },
+  { position_id: "return", slot: "上午出訂單前" }, { position_id: "return", slot: "出貨完成後" },
+  { position_id: "stocktake", slot: "出貨完成後" },
 ];
 
 const STAFF = [
@@ -268,6 +308,8 @@ const STAFF = [
   { id: "s9", name: "黃盈珊", employment_type: "正職", primary_group: "出貨組", is_active: true },
   { id: "s10", name: "連陳軒", employment_type: "正職", primary_group: "進貨組", is_active: true },
   { id: "s11", name: "李玄鳳", employment_type: "PT", primary_group: "進貨組", is_active: true },
+  // 新增：一位「不固定」的 PT，用來示範票0規則六「出貨仍缺→先用不固定補」的順序
+  { id: "s12", name: "施雅婷", employment_type: "PT", primary_group: "不固定", is_active: true },
 ];
 
 function ab(pt_id, position_id, level) { return { pt_id, position_id, level }; }
@@ -278,12 +320,29 @@ const ABILITIES = [
   ...[["s4","picking",2],["s4","packing",2],["s4","nopack",3],["s4","boxship",2]].map(a=>ab(...a)),
   ...[["s5","picking",3],["s5","boxship",3],["s5","packing",2],["s5","nopack",2]].map(a=>ab(...a)),
   ...[["s6","picking",2],["s6","packing",2],["s6","nopack",3],["s6","boxship",2]].map(a=>ab(...a)),
-  ...[["s7","printer",3],["s7","picking",3],["s7","packing",3],["s7","boxship",3],["s7","nopack",3]].map(a=>ab(...a)),
-  ...[["s8","picking",3],["s8","packing",3],["s8","boxship",3],["s8","nopack",3],["s8","printer",2]].map(a=>ab(...a)),
-  ...[["s9","picking",3],["s9","packing",2],["s9","boxship",3],["s9","nopack",2]].map(a=>ab(...a)),
+  // 【補充決議】處理退貨只有「真的有能力記錄」的正職能排：真實資料庫目前只有這 3 位
+  // 正職有退貨三級記錄，沒有任何 PT 有記錄（沒記錄＝視為一級＝不能排），完全沿用
+  // 既有的能力等級規則，不另外寫判斷
+  ...[["s7","printer",3],["s7","picking",3],["s7","packing",3],["s7","boxship",3],["s7","nopack",3],["s7","return",3]].map(a=>ab(...a)),
+  ...[["s8","picking",3],["s8","packing",3],["s8","boxship",3],["s8","nopack",3],["s8","printer",2],["s8","return",3]].map(a=>ab(...a)),
+  ...[["s9","picking",3],["s9","packing",2],["s9","boxship",3],["s9","nopack",2],["s9","return",3]].map(a=>ab(...a)),
   ...[["s10","inbound",3],["s10","groupbuy",3]].map(a=>ab(...a)),
-  ...[["s11","inbound",3],["s11","groupbuy",2]].map(a=>ab(...a)),
+  // 「固定進貨組」的李玄鳳平常只做進貨，但也登記了撿貨/包裝/出箱貨的能力——
+  // 出貨優先日時這些能力才會被用上（情境(c)示範這個順序：不固定先補，她排在最後）
+  ...[["s11","inbound",3],["s11","groupbuy",2],["s11","picking",3],["s11","packing",3],["s11","boxship",3]].map(a=>ab(...a)),
+  ...[["s12","picking",3],["s12","packing",2],["s12","nopack",2]].map(a=>ab(...a)),
 ];
+// 【補充決議】盤點真實資料庫目前「完全沒有任何人的能力記錄」（0 筆）——這是真實狀態，
+// 不是 bug，所以這裡刻意不幫任何人加盤點的能力，讓「人手不足」警示自然跳出來
+// （見情境(a)(h)：每天「出貨完成後」的盤點都會顯示需要 2 人、排到 0 人）
+
+// 情境(g) 專用：複製一份 ABILITIES，把黃盈珊在撿貨／包裝／出箱貨／無包裝出貨／
+// 處理退貨的能力都壓低成二級（其他正職、多位 PT 在這些崗位都還是三級）
+const FULLTIME_GUARANTEE_ABILITIES = ABILITIES.map((a) =>
+  a.pt_id === "s9" && ["picking", "packing", "boxship", "nopack", "return"].includes(a.position_id)
+    ? { ...a, level: 2 }
+    : a
+);
 
 const WEEK_START = "2026-10-19"; // 本週一
 const WEEK_DATES = ScheduleLogic.getWeekDates(WEEK_START).slice(0, 6); // 一～六，不含週日
@@ -330,24 +389,42 @@ function baseInput(headcounts, overrides, specialDates, prevWeek) {
 }
 
 // ============================================================================
-// 5 個引導情境
+// 9 個引導情境：(a)(d)(e)(f) 是延續上一版、本來就正確的情境（資料更新成真實的
+// 10 個崗位），(b)(c)(g)(h)(i) 是這次 bug 修正新增／改寫的情境
 // ============================================================================
 
 const SCENARIOS = {
   a: {
     label: "(a) 正常的一週",
-    desc: "人力比較寬鬆的一週，用來先看演算法在<b>正常情況</b>下排出來的樣子：挑人順序、備援崗位怎麼運作。到了週五人力稍微吃緊、週六也會看到有人因為「本週已滿4天」被排除——這些都是正常現象，不是故障。",
+    desc: "人力比較寬鬆的一週，用來先看演算法在<b>正常情況</b>下排出來的樣子：挑人順序、備援崗位怎麼運作。到了週五人力稍微吃緊、週六也會看到有人因為「本週已滿4天」被排除——這些都是正常現象，不是故障。也可以順便看到「處理團購訂單」「處理批發訂單」完全沒出現在表格裡（已停用／自動排班跳過），以及「盤點」每天都跳出人手不足警示——這是真實資料庫目前 0 人有盤點能力記錄的真實狀態，不是 bug。",
     build: () => baseInput(RELAXED_HEADCOUNT, null, [], BALANCED_PREV_WEEK),
   },
   b: {
-    label: "(b) 出貨優先日",
-    desc: "把週一標成電商檔期促銷日（加人數設定為 +2），看撿貨/包裝/無包裝出貨/出箱貨的基準人數怎麼被拉高，以及備援崗位（印訂單→包裝、撿貨→包裝…）怎麼一起運作。這次示範也讓「出箱貨」在人力被加成後完全排不進去——這提醒了「基準人數相同的崗位之間，加人時該怎麼排序」也是值得之後討論的細節。",
-    build: () => baseInput(RELAXED_HEADCOUNT, null, [
-      { date: WEEK_DATES[0], type: "電商檔期", name: "雙11加班", extra_headcount: 2 },
+    label: "(b) 包裝崗位 4 人硬上限",
+    desc: "【修正：包裝必須用真實 max_headcount=4】把週一標成出貨優先日（加人數 +3），包裝基準刻意設定成全場最高（3 人）才會被排在撿貨／出箱貨之前優先分人；加上 +3 之後，包裝理論上要 3+3=6 人，但包裝站只有 4 個實體工位，硬性上限在任何情況都不能被打破。檢查週一「上午出訂單後」「下午出訂單後」的包裝格子：候選人手明明充足（9 位出貨組人員都有能力），最後也只會停在剛好 4 人，並顯示清楚的「包裝：需要 4 人，只排到 4 人」（缺口已經是 0，因為目標本身也已經被鉏到上限）。",
+    build: () => baseInput(PACKING_CAP_HEADCOUNT, null, [
+      { date: WEEK_DATES[0], type: "電商檔期", name: "出貨優先日（測試包裝上限）", extra_headcount: 3 },
     ], BALANCED_PREV_WEEK),
   },
   c: {
-    label: "(c) PT 4 天上限排除",
+    label: "(c) 出貨優先日：固定進貨組支援出貨",
+    desc: "【修正：固定進貨組要被納入出貨候選，但排在不固定之後】把週四標成出貨優先日，並讓幾乎所有人週四請假，只留下李睿懷（出貨組正常候選）、施雅婷（不固定，撿貨只登記三級 1 項能力）、李玄鳳（固定進貨組，平常只做進貨，但撿貨／包裝／出箱貨都登記三級——刻意讓她比施雅婷「更會做出貨」）三人可上班。撿貨這天需求是 2 人：李睿懷補 1 人之後只缺 1 人，照順序先讓不固定的施雅婷補上，所以撿貨最後是「李睿懷＋施雅婷」，能力更強的李玄鳳<b>完全排不進撿貨</b>，不是「誰能力好就先排誰」。同一個時段裡包裝這天目標是 1 人：這時不固定的人已經被撿貨用完、沒有剩餘供給了，缺口還在，才輪到固定進貨組的李玄鳳補上包裝——證明「固定進貨組排在不固定之後」這個順序，同時也證明她真的有被納入出貨的候選名單裡（不是像舊版一樣被完全排除在出貨候選之外）。",
+    build: () => {
+      const thu = WEEK_DATES[3];
+      const overrides = {};
+      for (const s of STAFF) {
+        if (s.id === "s1" || s.id === "s11" || s.id === "s12") continue;
+        overrides[s.id] = { [thu]: "全天休假" };
+      }
+      return baseInput(RELAXED_HEADCOUNT, overrides, [
+        // extra_headcount 刻意設 0：讓這天仍然是「出貨優先日」（固定進貨組才會被
+        // 考慮進出貨候選），但基準人數不被拉高，才能精準湊出「缺 1 人」的情境
+        { date: thu, type: "電商檔期", name: "測試用出貨優先日", extra_headcount: 0 },
+      ], BALANCED_PREV_WEEK);
+    },
+  },
+  d: {
+    label: "(d) PT 4 天上限排除",
     desc: "故意讓林清瑞、楊鎔慈、葉翠茹、陳語姍這幾位 PT 週一～週四請假，逼得黃依婷跟李睿懷連上 4 天。請注意看週五、週六：即使他們當天仍登記「全天可上班」，系統也會把他們排除，並在提醒裡明確寫出「已達 4 天上限」。",
     build: () => {
       const offDays = WEEK_DATES.slice(0, 4);
@@ -359,8 +436,8 @@ const SCENARIOS = {
       return baseInput(RELAXED_HEADCOUNT, overrides, [], BALANCED_PREV_WEEK);
     },
   },
-  d: {
-    label: "(d) 人手不足、平均分攤",
+  e: {
+    label: "(e) 人手不足、平均分攤",
     desc: "週三讓所有印訂單合格的人（李睿懷、楊鎔慈、王瀞玉、許庭瑄）跟兩位進貨專員（連陳軒、李玄鳳）同時請假，製造出貨、進貨同時缺人的情況。觀察警告裡「兩邊平均分攤可動用人力」的訊息，以及印訂單當天真的排不出來、需要人工處理的警示。",
     build: () => {
       const wed = WEEK_DATES[2];
@@ -369,14 +446,41 @@ const SCENARIOS = {
       return baseInput(RELAXED_HEADCOUNT, overrides, [], BALANCED_PREV_WEEK);
     },
   },
-  e: {
-    label: "(e) 印單輪排讀上週資料",
+  f: {
+    label: "(f) 印單輪排讀上週資料",
     desc: "上週印訂單 PT 班次：李睿懷排了 2 天、楊鎔慈排了 1 天。照規則「上週拿 2 天的人這週拿 1 天」，這週應該反過來：楊鎔慈這週拿 2 天、李睿懷只拿 1 天。觀察週三、週四會不會換成楊鎔慈，以及週五原本要給李睿懷的 1 天，又因為他當週已經排滿 4 天上限，被自動換成正職王瀞玉頂上——兩條規則同時生效的實例。",
     build: () => baseInput(RELAXED_HEADCOUNT, null, [], [
       { position_id: "printer", position_name: "印訂單", pt_id: "s1", priority: 1, date: "2026-10-12" },
       { position_id: "printer", position_name: "印訂單", pt_id: "s1", priority: 1, date: "2026-10-13" },
       { position_id: "printer", position_name: "印訂單", pt_id: "s3", priority: 1, date: "2026-10-14" },
     ]),
+  },
+  g: {
+    label: "(g) 正職一定要上工",
+    desc: "【修正：正職不能被漏排】刻意把每個崗位的基準人數都壓到只要 1 人，同時把正職黃盈珊在撿貨／包裝／出箱貨／無包裝出貨／處理退貨的能力都調弱成二級（其他正職、多位 PT 在這些崗位都還是三級）。這樣一來，每個崗位僅有的 1 個名額，正常排班都會先被三級的同事搶走，黃盈珊二級的身份照「正常候選排序」永遠排不到——這正是舊版漏洞實際會發生的情況：她當天明明登記可上班、也沒請假，卻可能整天一個崗位都分不到，被誤判成「人力過剩」。檢查週一到週五：黃盈珊<b>每天都會被排進工作</b>（通常是包裝或處理退貨，即使那個崗位已經有別人、基準其實只要 1 人），而且草稿提醒裡完全不會出現她「人力過剩」。",
+    build: () => {
+      const input = baseInput(FULLTIME_GUARANTEE_HEADCOUNT, null, [], BALANCED_PREV_WEEK);
+      input.abilities = FULLTIME_GUARANTEE_ABILITIES;
+      return input;
+    },
+  },
+  h: {
+    label: "(h) 週六湊不滿 4 人的警示",
+    desc: "【修正：週六一定要湊滿 4 人，排不滿要有明確警示】讓週六所有正職請假（印訂單輪排到的人、以及備援的正職都無法頂上），同時讓大部分 PT 也請假，只留李睿懷登記週六可上班。結果李睿懷因為平日（週一～週五）已經被正常排滿本週 4 天上限，週六依規則也不能再排他——週六最後 0 正職 + 0 PT，完全湊不到人，遠低於硬性規定的 4 人（1 正職 + 3 PT）。檢查草稿提醒裡是否有清楚寫出「人數沒有湊滿硬性規定的 4 人」，而不是悄悄排少於 4 人就算了（這個案例同時也示範了「PT 4 天上限」跟「週六硬性 4 人」兩條規則疊加時會發生什麼事，兩條都正確生效，沒有互相蓋過）。",
+    build: () => {
+      const sat = WEEK_DATES[5];
+      const overrides = {};
+      for (const s of STAFF) {
+        if (s.id === "s1") continue;
+        overrides[s.id] = { [sat]: "全天休假" };
+      }
+      return baseInput(RELAXED_HEADCOUNT, overrides, [], BALANCED_PREV_WEEK);
+    },
+  },
+  i: {
+    label: "(i) 10 個崗位、真實時段對照",
+    desc: "【修正：position_slot_map 要用真實資料】用公司目前真實的基準人數跑一整週，方便逐一核對新崗位的時段：「處理退貨」只會出現在「上午出訂單前」跟「出貨完成後」，而且只有王瀞玉／許庭瑄／黃盈珊（有能力記錄的 3 位正職）會被排到，PT 完全不會出現在退貨；「盤點」只會出現在「出貨完成後」，但因為真實資料庫目前沒有任何人登記盤點能力，每天都會缺到 0 人並跳出人手不足提醒；「處理團購訂單」「處理批發訂單」整張表格、整份提醒清單都不會出現這兩個崗位的任何一筆資料。",
+    build: () => baseInput(REAL_HEADCOUNT, null, [], BALANCED_PREV_WEEK),
   },
 };
 
