@@ -237,6 +237,8 @@ function buildContext(input) {
     // 手動鎖定的格子可能落在不納入自動排班的崗位（例如處理批發訂單），查名稱要用完整清單
     allPositionById: new Map(positions.map((p) => [p.id, p])),
     lockedDaysByPt: new Map(), // ptId -> Set(date)：有手動鎖定格子的日子，見 applyLockedRows
+    lastSaturday: buildLastSaturdayMap(input), // ptId -> 最近一次上週六的日期（週六輪流用）
+    saturdayRotation: null, // 這週六怎麼挑人的說明（畫面上顯示用），見 assignSaturday
     headcountByPosition,
     activeStaff,
     abilities,
@@ -620,9 +622,48 @@ function computePrinterRotation(input, ctx) {
     return [...pool].sort((a, b) => a.name.localeCompare(b.name, "zh-Hant"))[0].id;
   }
 
+  // 週六的正職＝週六印單的人（第六次補充決議）：在能上週六、會印單的正職之間輪流，
+  // 離上次上週六最久的先；同樣久時，印單三級優先，再用姓名。輪到的人週六沒空，就換
+  // 下一位（週六最先排，這時還沒有任何平日指派，所以只看請假跟手動鎖定）。
+  //
+  // 【開放判斷】正職的另外兩天印單（週一、出貨優先日／週二）維持原本做法：固定由同一位
+  // 正職（印單三級、姓名排序第一位）負責，不跟著週六輪流。票0第七條只說「正職 3 天：
+  // 週一、週六固定；第 3 天…」，沒說這 3 天要不要同一個人；週六改成輪流之後，週六印單
+  // 的人可能跟週一／週二不同。若 Cynthia 希望平日那兩天也輪流，再調整。
+  function pickSaturdayFullTime() {
+    if (lockedPrinterByDate.has(saturday)) return lockedPrinterByDate.get(saturday);
+    const candidates = fullTimePrinters.filter(canWorkSaturday);
+    const order = [...candidates].sort((a, b) => {
+      const la = ctx.lastSaturday.get(a.id) || "";
+      const lb = ctx.lastSaturday.get(b.id) || "";
+      if (la !== lb) return la < lb ? -1 : 1;
+      const lv = getLevel(b.id, printerPosition.id, ctx.abilities) - getLevel(a.id, printerPosition.id, ctx.abilities);
+      if (lv !== 0) return lv;
+      return a.name.localeCompare(b.name, "zh-Hant");
+    });
+    const usable = order.find((s) => printerIsUsable(s.id, s, saturday, ctx));
+    const chosen = usable || order[0] || null;
+    ctx.saturdayRotation = {
+      fullTime: order.map((s) => ({
+        id: s.id,
+        name: s.name,
+        lastSaturday: ctx.lastSaturday.get(s.id) || null,
+        status:
+          chosen && s.id === chosen.id && usable
+            ? "排入（輪到了，當天也印訂單）"
+            : printerIsUsable(s.id, s, saturday, ctx)
+            ? "沒輪到（另一位更久沒上週六）"
+            : "週六請假／沒空",
+        picked: !!(usable && s.id === usable.id),
+      })),
+    };
+    if (!chosen) return pickFullTimePrinter(saturday);
+    return chosen.id;
+  }
+
   const assignments = new Map();
   assignments.set(monday, pickFullTimePrinter(monday));
-  assignments.set(saturday, pickFullTimePrinter(saturday));
+  assignments.set(saturday, pickSaturdayFullTime());
   assignments.set(thirdDay, pickFullTimePrinter(thirdDay));
 
   // PT 的 3 天 = 剩下的平日（二～五，去掉 thirdDay）；被手動鎖定印單的日子直接照鎖定的人
@@ -802,6 +843,17 @@ function assignBackups(ctx, date, slot) {
 // 可用人力也用不完，剩下的人力會補給另一組，不會讓人平白閒置。
 // ----------------------------------------------------------------------------
 
+// 同一個時段內先補哪個崗位（第六次補充決議）：有性別限制的崗位先排（目前只有出箱貨），
+// 先把男生放到只有男生能做的位置，剩下的人再排其他崗位；其餘照原本的順序（基準人數多的先）
+function fillOrder(ctx, positions, weightOf) {
+  return [...positions].sort((a, b) => {
+    const ga = a.gender_restriction ? 1 : 0;
+    const gb = b.gender_restriction ? 1 : 0;
+    if (ga !== gb) return gb - ga;
+    return weightOf(b) - weightOf(a);
+  });
+}
+
 function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds) {
   const skip = skipPositionIds || new Set();
   const allActivePositions = ctx.positions.filter(
@@ -842,9 +894,7 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
     null
   ).filter((id) => ctx.activeStaff.find((s) => s.id === id).primary_group === GROUP_SHIPPING);
 
-  for (const p of [...shippingPositions].sort(
-    (a, b) => (ctx.headcountByPosition.get(b.id) || 0) - (ctx.headcountByPosition.get(a.id) || 0)
-  )) {
+  for (const p of fillOrder(ctx, shippingPositions, (x) => ctx.headcountByPosition.get(x.id) || 0)) {
     fillPosition(ctx, date, slot, p, shippingTargets.get(p.id), shippingPrimaryPool, ctx.shippingPositionIds);
   }
 
@@ -856,9 +906,7 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
     null
   ).filter((id) => ctx.activeStaff.find((s) => s.id === id).primary_group === GROUP_INBOUND);
 
-  for (const p of [...inboundPositions].sort(
-    (a, b) => (ctx.headcountByPosition.get(b.id) || 0) - (ctx.headcountByPosition.get(a.id) || 0)
-  )) {
+  for (const p of fillOrder(ctx, inboundPositions, (x) => ctx.headcountByPosition.get(x.id) || 0)) {
     fillPosition(ctx, date, slot, p, inboundTargets.get(p.id), inboundPrimaryPool, ctx.inboundPositionIds);
   }
 
@@ -953,7 +1001,7 @@ function fillFromFlexPool(ctx, date, slot, positions, targets, flexCandidateSet,
   if (allowance <= 0) return 0;
   let remainingAllowance = allowance;
   let totalAdded = 0;
-  for (const p of [...positions].sort((a, b) => (targets.get(b.id) || 0) - (targets.get(a.id) || 0))) {
+  for (const p of fillOrder(ctx, positions, (x) => targets.get(x.id) || 0)) {
     if (remainingAllowance <= 0) break;
     const filled = currentPriorityCount(ctx, date, slot, p.id);
     const gap = Math.max(0, (targets.get(p.id) || 0) - filled);
@@ -980,13 +1028,56 @@ function fillFromFlexPool(ctx, date, slot, positions, targets, flexCandidateSet,
 
 const SATURDAY_SLOTS = ["上午出訂單前", "上午出訂單後", "下午出訂單前", "下午出訂單後"];
 
+// ----------------------------------------------------------------------------
+// 十五之〇、週六輪流（票1 第六次補充決議）
+//
+// 不要一直讓同一批人上週六：離上次上週六最久（或從來沒上過）的人優先，條件相同時
+// 再用既有的挑人順序（rankCandidates：三級崗位多 → 本週天數少 → 姓名）。
+// 「上次上週六」讀 input.pastSchedule（過去幾週的班表）＋ input.previousWeekSchedule。
+// ----------------------------------------------------------------------------
+
+function buildLastSaturdayMap(input) {
+  const map = new Map();
+  for (const r of [...(input.pastSchedule || []), ...(input.previousWeekSchedule || [])]) {
+    if (!r.date || !isSaturday(r.date) || (r.priority || 1) !== 1) continue;
+    if (!map.has(r.pt_id) || map.get(r.pt_id) < r.date) map.set(r.pt_id, r.date);
+  }
+  return map;
+}
+
+function saturdayRotationOrder(ctx, ids) {
+  const rankIndex = new Map(rankCandidates(ids, ctx, ctx.shippingPositionIds).map((id, i) => [id, i]));
+  return [...ids].sort((a, b) => {
+    const la = ctx.lastSaturday.get(a) || "";
+    const lb = ctx.lastSaturday.get(b) || "";
+    if (la !== lb) return la < lb ? -1 : 1; // 越久以前（"" = 從沒上過）越前面
+    return rankIndex.get(a) - rankIndex.get(b);
+  });
+}
+
+// 「人員組成優先於輪流」：先把 PT 分成三級崗位多／少兩群，再各自在群內輪流。
+// 分群用「所有能上週六的 PT」的三級出貨崗位數中位數切開（大於中位數＝多），不看這週
+// 有沒有空，分群才不會每週跟著請假狀況變動；萬一大家一樣多切不開，就照既有排序前一半算多。
+function splitSaturdayPtGroups(ctx) {
+  const pts = ctx.activeStaff.filter((s) => s.employment_type === "PT" && canWorkSaturday(s));
+  const level3 = (s) => countLevel3(s.id, ctx.abilities, ctx.shippingPositionIds);
+  const counts = pts.map(level3).sort((a, b) => a - b);
+  const n = counts.length;
+  const median = n === 0 ? 0 : (counts[Math.floor((n - 1) / 2)] + counts[Math.ceil((n - 1) / 2)]) / 2;
+  let high = new Set(pts.filter((s) => level3(s) > median).map((s) => s.id));
+  if (high.size === 0 || high.size === n) {
+    const ranked = rankCandidates(pts.map((s) => s.id), ctx, ctx.shippingPositionIds);
+    high = new Set(ranked.slice(0, Math.ceil(n / 2)));
+  }
+  return { high, median };
+}
+
 function assignSaturday(ctx, date, printerId) {
   const printerPosition = ctx.positions.find((p) => p.name === "印訂單");
   const pickingPosition = ctx.positions.find((p) => p.name === "撿貨");
   const packingPosition = ctx.positions.find((p) => p.name === "包裝");
   const noPackagePosition = ctx.positions.find((p) => p.name === "無包裝出貨");
 
-  const shippingPositionIds = ctx.shippingPositionIds;
   const saturdayPtPositions = [pickingPosition, packingPosition, noPackagePosition];
 
   // 手動鎖定的格子已經佔掉那個人那個時段，這裡只補他還空著的時段
@@ -1008,12 +1099,6 @@ function assignSaturday(ctx, date, printerId) {
     isUnderWeeklyCap(s.id, s, ctx, date) &&
     isAvailableForSlotToday(s.id, date, SATURDAY_SLOTS[0], ctx) &&
     saturdayPtPositions.some((p) => getLevel(s.id, p.id, ctx.abilities) >= 2 && genderOk(s, p));
-  const byLevel3Desc = (a, b) =>
-    countLevel3(b.id, ctx.abilities, shippingPositionIds) - countLevel3(a.id, ctx.abilities, shippingPositionIds);
-  const shippingFirst = (list) => [
-    ...list.filter((s) => s.primary_group === GROUP_SHIPPING).sort(byLevel3Desc),
-    ...list.filter((s) => s.primary_group !== GROUP_SHIPPING).sort(byLevel3Desc),
-  ];
 
   // 正職：先印單（第一段），印完支援其他出貨崗位（後三段）
   if (printerId) {
@@ -1029,9 +1114,12 @@ function assignSaturday(ctx, date, printerId) {
     // 【修正 2】印訂單輪排那天找不到可用的人，不代表週六就放棄湊正職——票2決議
     // 第八條／補充決議都說週六是「硬性」1 正職 + 3 PT，所以還是要盡量找一位當天
     // 可上班、有出貨能力的正職頂上（他當天不印單，整天支援出貨）
-    const fallbackFullTime = shippingFirst(
-      ctx.activeStaff.filter((s) => s.employment_type === "正職" && eligibleToday(s))
-    )[0];
+    const ftEligible = ctx.activeStaff.filter((s) => s.employment_type === "正職" && eligibleToday(s));
+    const rotate = (list) => saturdayRotationOrder(ctx, list.map((s) => s.id)).map(staffById);
+    const fallbackFullTime = [
+      ...rotate(ftEligible.filter((s) => s.primary_group === GROUP_SHIPPING)),
+      ...rotate(ftEligible.filter((s) => s.primary_group !== GROUP_SHIPPING)),
+    ][0];
     if (fallbackFullTime) {
       fullTimeId = fallbackFullTime.id;
       for (const slot of SATURDAY_SLOTS) commitIfFree(slot, pickingPosition, fullTimeId);
@@ -1043,21 +1131,72 @@ function assignSaturday(ctx, date, printerId) {
     }
   }
 
-  // PT：已經在週六班底裡的 PT（例如被手動鎖定在週六）先算進 3 位，剩下的名額依
-  // 「出貨組先、進貨組後」挑；出貨組人夠時維持原本的 2 位三級崗位多＋1 位三級崗位少
-  const crewPtCount = [...crewIds()].filter((id) => {
-    const s = staffById(id);
-    return s && s.employment_type === "PT";
-  }).length;
-  const need = Math.max(0, 3 - crewPtCount);
+  // PT（第六次補充決議）：先分「三級崗位多／少」兩群，各群內照週六輪流順序挑，
+  // 維持 2 位多＋1 位少；已經在週六班底裡的 PT（例如被手動鎖定在週六）先算進各群名額。
+  // 某一群出貨組不夠時，先用出貨組另一群補（出貨組優先於進貨組，第三次補充決議），
+  // 出貨組全部不夠才找進貨組，而且缺哪一群就先從進貨組的那一群找。
+  const { high } = splitSaturdayPtGroups(ctx);
   const crewNow = crewIds();
+  const crewPts = [...crewNow].map(staffById).filter((s) => s && s.employment_type === "PT");
+  const totalNeed = Math.max(0, 3 - crewPts.length);
+  const needHigh = Math.min(totalNeed, Math.max(0, 2 - crewPts.filter((s) => high.has(s.id)).length));
+  const needLow = Math.min(totalNeed - needHigh, Math.max(0, 1 - crewPts.filter((s) => !high.has(s.id)).length));
   const pool = ctx.activeStaff.filter((s) => s.employment_type === "PT" && !crewNow.has(s.id) && eligibleToday(s));
-  const shippingRanked = pool.filter((s) => s.primary_group === GROUP_SHIPPING).sort(byLevel3Desc);
-  const ordered = shippingFirst(pool);
-  const chosenPts =
-    need === 3 && shippingRanked.length >= 3
-      ? [shippingRanked[0], shippingRanked[1], shippingRanked[shippingRanked.length - 1]]
-      : ordered.slice(0, need);
+  const ordered = (list) => saturdayRotationOrder(ctx, list.map((s) => s.id)).map(staffById);
+  const ship = pool.filter((s) => s.primary_group === GROUP_SHIPPING);
+  const inbound = pool.filter((s) => s.primary_group !== GROUP_SHIPPING);
+  const shipHigh = ordered(ship.filter((s) => high.has(s.id)));
+  const shipLow = ordered(ship.filter((s) => !high.has(s.id)));
+  const inbHigh = ordered(inbound.filter((s) => high.has(s.id)));
+  const inbLow = ordered(inbound.filter((s) => !high.has(s.id)));
+
+  const picked = []; // { s, reason }
+  const take = (list, n, reason) => {
+    for (const s of list) {
+      if (n <= 0) break;
+      if (picked.some((p) => p.s.id === s.id)) continue;
+      picked.push({ s, reason });
+      n--;
+    }
+    return n;
+  };
+  const shortHigh = take(shipHigh, needHigh, "三級崗位多・輪到了");
+  const shortLow = take(shipLow, needLow, "三級崗位少・輪到了");
+  let remaining = shortHigh + shortLow;
+  remaining = take(ordered(ship), remaining, shortHigh > 0 ? "三級崗位多的人不夠，由出貨組三級崗位少的補" : "三級崗位少的人不夠，由出貨組三級崗位多的補");
+  if (remaining > 0) take(shortHigh > 0 ? [...inbHigh, ...inbLow] : [...inbLow, ...inbHigh], remaining, "出貨組不夠，由進貨組補");
+  const chosenPts = picked.map((p) => p.s);
+
+  // 這週六怎麼挑人的說明：每位候選人的分群、上次上週六日期、有沒有被挑到、為什麼
+  const ptStatus = (s) => {
+    const p = picked.find((x) => x.s.id === s.id);
+    if (p) return `排入（${p.reason}）`;
+    if (crewNow.has(s.id)) return "已在週六班底（手動鎖定等）";
+    if (!canWorkSaturday(s)) return "固定不能上週六";
+    const avail = getAvailability(s.id, date, ctx.availability);
+    if (avail && !isAvailableForSlot(avail.range, SATURDAY_SLOTS[0])) return `週六登記「${avail.range}」`;
+    if (!isUnderWeeklyCap(s.id, s, ctx, date)) return "本週已滿 4 天";
+    if (!saturdayPtPositions.some((p) => getLevel(s.id, p.id, ctx.abilities) >= 2 && genderOk(s, p))) return "沒有週六崗位的能力";
+    if (s.primary_group !== GROUP_SHIPPING) return "進貨組：出貨組的人夠，不排";
+    return "沒輪到（同群有人更久沒上週六，或名額已滿）";
+  };
+  ctx.saturdayRotation = {
+    date,
+    fullTime: ctx.saturdayRotation && ctx.saturdayRotation.fullTime ? ctx.saturdayRotation.fullTime : [],
+    pt: saturdayRotationOrder(
+      ctx,
+      ctx.activeStaff.filter((s) => s.employment_type === "PT").map((s) => s.id)
+    ).map(staffById).map((s) => ({
+      id: s.id,
+      name: s.name,
+      primaryGroup: s.primary_group,
+      abilityGroup: high.has(s.id) ? "三級崗位多" : "三級崗位少",
+      level3Count: countLevel3(s.id, ctx.abilities, ctx.shippingPositionIds),
+      lastSaturday: ctx.lastSaturday.get(s.id) || null,
+      status: ptStatus(s),
+      picked: chosenPts.some((c) => c.id === s.id),
+    })),
+  };
 
   const ptCrew = [
     ...chosenPts,
@@ -1242,7 +1381,10 @@ function generateWeekSchedule(input) {
     ctx.warnings.push({ type: "priority_day", date: input.weekStart, message: "本週沒有出貨優先日" });
   }
 
-  for (const date of weekDates) {
+  // 第六次補充決議：先排週六、再排平日。週六能配合的人比較少，先確保週六排得出來；
+  // 被排到週六的 PT，週六會先算進每週 4 天上限，平日就少一天可排。
+  const processingOrder = [...weekDates.filter(isSaturday), ...weekDates.filter((d) => !isSaturday(d))];
+  for (const date of processingOrder) {
     if (isSunday(date)) continue; // 週日店休，不排班
 
     if (isSaturday(date)) {
@@ -1289,7 +1431,12 @@ function generateWeekSchedule(input) {
     markSurplus(ctx, date);
   }
 
-  return { schedule: ctx.scheduleRows, warnings: ctx.warnings };
+  // 排班是週六先排，輸出照日期、時段排好，方便閱讀跟比對
+  const slotIndex = (s) => SLOTS.indexOf(s);
+  const schedule = [...ctx.scheduleRows].sort((a, b) =>
+    a.date !== b.date ? (a.date < b.date ? -1 : 1) : slotIndex(a.slot) - slotIndex(b.slot)
+  );
+  return { schedule, warnings: ctx.warnings, saturdayRotation: ctx.saturdayRotation };
 }
 
 // ----------------------------------------------------------------------------
