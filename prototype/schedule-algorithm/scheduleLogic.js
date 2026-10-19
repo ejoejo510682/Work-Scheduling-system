@@ -604,8 +604,15 @@ function computePrinterRotation(input, ctx) {
     }
   }
 
+  // 平日的正職印單日（週一、第 3 天）固定由 input.weekdayFtPrinterId 指定的正職負責
+  // （第七次補充決議：王瀞玉）。她當天請假或沒空時，resolvePrinterForDate 會照原本的
+  // 規則找其他符合資格的人頂上並留下提醒。沒有指定（或指定的人不會印單）才退回舊做法：
+  // 印單三級的正職裡用姓名排序挑第一位。
+  const fixedWeekdayPrinter = fullTimePrinters.find((s) => s.id === input.weekdayFtPrinterId) || null;
+
   function pickFullTimePrinter(date) {
     if (lockedPrinterByDate.has(date)) return lockedPrinterByDate.get(date);
+    if (!isSaturday(date) && fixedWeekdayPrinter) return fixedWeekdayPrinter.id;
     // 週六印單的正職必須是能上週六的人（第三次補充決議：can_work_saturday）
     const eligible = isSaturday(date) ? fullTimePrinters.filter(canWorkSaturday) : fullTimePrinters;
     const level3 = eligible.filter((s) => getLevel(s.id, printerPosition.id, ctx.abilities) === 3);
@@ -618,18 +625,16 @@ function computePrinterRotation(input, ctx) {
       });
       return null;
     }
-    // 固定用姓名排序挑第一位，實務上這天應該都是同一位固定的正職
+    // 沒有指定固定印單正職時的退路：姓名排序挑第一位，讓結果每次都一樣
     return [...pool].sort((a, b) => a.name.localeCompare(b.name, "zh-Hant"))[0].id;
   }
 
-  // 週六的正職＝週六印單的人（第六次補充決議）：在能上週六、會印單的正職之間輪流，
-  // 離上次上週六最久的先；同樣久時，印單三級優先，再用姓名。輪到的人週六沒空，就換
-  // 下一位（週六最先排，這時還沒有任何平日指派，所以只看請假跟手動鎖定）。
-  //
-  // 【開放判斷】正職的另外兩天印單（週一、出貨優先日／週二）維持原本做法：固定由同一位
-  // 正職（印單三級、姓名排序第一位）負責，不跟著週六輪流。票0第七條只說「正職 3 天：
-  // 週一、週六固定；第 3 天…」，沒說這 3 天要不要同一個人；週六改成輪流之後，週六印單
-  // 的人可能跟週一／週二不同。若 Cynthia 希望平日那兩天也輪流，再調整。
+  // 正職印單 3 天的分法（第七次補充決議）：
+  //   - 週六：由當週輪到上週六的正職印——在能上週六、會印單的正職（王瀞玉、許庭瑄）之間
+  //     輪流，離上次上週六最久的先；同樣久時，印單三級優先，再用姓名。輪到的人週六沒空，
+  //     就換下一位（週六最先排，這時還沒有任何平日指派，所以只看請假跟手動鎖定）。
+  //   - 週一、第 3 天（當週出貨優先日，沒有則週二）：固定由王瀞玉印（weekdayFtPrinterId）。
+  //   所以同一週的週六印單者，可能跟週一／第 3 天不同人。
   function pickSaturdayFullTime() {
     if (lockedPrinterByDate.has(saturday)) return lockedPrinterByDate.get(saturday);
     const candidates = fullTimePrinters.filter(canWorkSaturday);
@@ -1056,7 +1061,8 @@ function saturdayRotationOrder(ctx, ids) {
 }
 
 // 「人員組成優先於輪流」：先把 PT 分成三級崗位多／少兩群，再各自在群內輪流。
-// 分群用「所有能上週六的 PT」的三級出貨崗位數中位數切開（大於中位數＝多），不看這週
+// 分群用「所有能上週六的 PT」的三級出貨崗位數中位數切開（大於中位數＝多；第七次補充決議
+// 確認這個分法：多＝李睿懷、楊鎔慈、葉翠茹，少＝林清瑞、陳語姍、黃依婷、李玄鳳），不看這週
 // 有沒有空，分群才不會每週跟著請假狀況變動；萬一大家一樣多切不開，就照既有排序前一半算多。
 function splitSaturdayPtGroups(ctx) {
   const pts = ctx.activeStaff.filter((s) => s.employment_type === "PT" && canWorkSaturday(s));
