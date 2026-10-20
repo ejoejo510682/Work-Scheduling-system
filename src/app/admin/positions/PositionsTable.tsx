@@ -33,6 +33,10 @@ export function PositionsTable({
   const [editingHeadcountValue, setEditingHeadcountValue] = useState(1);
   const [headcountError, setHeadcountError] = useState<string | null>(null);
 
+  const [editingSlotsId, setEditingSlotsId] = useState<string | null>(null);
+  const [editingSlotsValue, setEditingSlotsValue] = useState<string[]>([]);
+  const [slotsError, setSlotsError] = useState<string | null>(null);
+
   const headcountByPosition = new Map(initialHeadcounts.map((h) => [h.position_id, h.headcount]));
   const slotsByPosition = new Map<string, string[]>();
   for (const row of initialSlotMap) {
@@ -160,6 +164,54 @@ export function PositionsTable({
     router.refresh();
   }
 
+  function startEditingSlots(position: Position) {
+    setEditingSlotsId(position.id);
+    setEditingSlotsValue(slotsByPosition.get(position.id) ?? []);
+    setSlotsError(null);
+  }
+
+  function toggleEditingSlot(slot: string) {
+    setEditingSlotsValue((prev) => (prev.includes(slot) ? prev.filter((s) => s !== slot) : [...prev, slot]));
+  }
+
+  async function saveSlots(position: Position) {
+    setSaving(true);
+    setSlotsError(null);
+    const supabase = createClient();
+    const current = slotsByPosition.get(position.id) ?? [];
+    const toAdd = editingSlotsValue.filter((s) => !current.includes(s));
+    const toRemove = current.filter((s) => !editingSlotsValue.includes(s));
+
+    // 只增刪有變動的時段，不先整批刪除再重建，避免中途失敗時把原本的時段設定弄丟
+    if (toRemove.length > 0) {
+      const { error: deleteError } = await supabase
+        .from("position_slot_map")
+        .delete()
+        .eq("position_id", position.id)
+        .in("slot", toRemove);
+      if (deleteError) {
+        setSlotsError(deleteError.message);
+        setSaving(false);
+        return;
+      }
+    }
+    if (toAdd.length > 0) {
+      const { error: insertError } = await supabase
+        .from("position_slot_map")
+        .insert(toAdd.map((slot) => ({ position_id: position.id, slot })));
+      if (insertError) {
+        setSlotsError(insertError.message);
+        setSaving(false);
+        router.refresh();
+        return;
+      }
+    }
+
+    setSaving(false);
+    setEditingSlotsId(null);
+    router.refresh();
+  }
+
   return (
     <div className="mt-6 space-y-8">
       <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
@@ -262,7 +314,55 @@ export function PositionsTable({
                   )}
                 </td>
                 <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
-                  {(slotsByPosition.get(p.id) ?? []).join("、") || "彈性（不綁定固定時段）"}
+                  {editingSlotsId === p.id ? (
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        {SLOTS.map((slot) => (
+                          <label
+                            key={slot}
+                            className="flex items-center gap-1 rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={editingSlotsValue.includes(slot)}
+                              onChange={() => toggleEditingSlot(slot)}
+                            />
+                            {slot}
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => saveSlots(p)}
+                          disabled={saving}
+                          className="text-xs font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-50 dark:text-emerald-400"
+                        >
+                          儲存
+                        </button>
+                        <button
+                          onClick={() => setEditingSlotsId(null)}
+                          disabled={saving}
+                          className="text-xs text-zinc-500 hover:text-zinc-700 disabled:opacity-50 dark:hover:text-zinc-300"
+                        >
+                          取消
+                        </button>
+                        {slotsError && <p className="text-xs text-red-600 dark:text-red-400">{slotsError}</p>}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <span>
+                        {SLOTS.filter((s) => (slotsByPosition.get(p.id) ?? []).includes(s)).join("、") ||
+                          "彈性（不綁定固定時段）"}
+                      </span>
+                      <button
+                        onClick={() => startEditingSlots(p)}
+                        className="shrink-0 text-xs font-normal text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+                      >
+                        編輯
+                      </button>
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <button
