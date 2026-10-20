@@ -907,7 +907,21 @@ function placeableCount(ctx, date, slot, position, pool) {
 
 // 依「能排的人越少越先」把一組崗位補到目標人數；allowance＝這個候選池最多能補幾人（平均分攤用，
 // 不限就傳 Infinity）。回傳實際補進去的人數。每個崗位的「能排人數」記到 ctx.fillTrace（驗證用）。
-function fillByScarcity(ctx, date, slot, positions, targets, pool, groupPositionIds, allowance, stage) {
+//
+// firstPersonPass＝true 時（出貨崗位用）分兩輪：
+//   第一輪：每個崗位先只補到 1 人（目標本來就是 0 的不補）——落實既有的硬性規則「每個出貨崗位
+//           （平日、在它適用的時段）至少要排到 1 人」：人不夠時，先讓每個出貨崗位各有 1 人，
+//           不會讓某個崗位先補滿 3 人、其他崗位 0 人（例如真實基準下的週五只剩 3 位正職）
+//   第二輪：再照原本的方式補到目標人數
+// 兩輪裡誰先補，都照「能排的人越少越先」；優先人選、整週先規劃、能力／性別／組別／上限規則不變。
+function fillByScarcity(ctx, date, slot, positions, targets, pool, groupPositionIds, allowance, stage, firstPersonPass) {
+  if (!firstPersonPass) return fillByScarcityRound(ctx, date, slot, positions, targets, pool, groupPositionIds, allowance, stage, 2);
+  const firstTargets = new Map(positions.map((p) => [p.id, Math.min(1, targets.get(p.id) || 0)]));
+  const added = fillByScarcityRound(ctx, date, slot, positions, firstTargets, pool, groupPositionIds, allowance, stage, 1);
+  return added + fillByScarcityRound(ctx, date, slot, positions, targets, pool, groupPositionIds, allowance - added, stage, 2);
+}
+
+function fillByScarcityRound(ctx, date, slot, positions, targets, pool, groupPositionIds, allowance, stage, round) {
   let remainingAllowance = allowance;
   let totalAdded = 0;
   const remaining = positions.filter((p) => (targets.get(p.id) || 0) > currentPriorityCount(ctx, date, slot, p.id));
@@ -923,20 +937,25 @@ function fillByScarcity(ctx, date, slot, positions, targets, pool, groupPosition
     );
     const { p, n } = scored[0];
     remaining.splice(remaining.indexOf(p), 1);
-    ctx.fillTrace.push({
+    const traceEntry = {
       date,
       slot,
       stage,
+      round,
       order: order++,
       positionId: p.id,
       candidates: n,
       // 挑這個崗位的當下，其他還沒排的崗位各有幾人能排（驗證「越少越先」用）
       remainingCounts: Object.fromEntries(scored.map((x) => [x.p.id, x.n])),
-    });
+      assigned: [], // 這一步實際排進去的人
+    };
+    ctx.fillTrace.push(traceEntry);
     const filled = currentPriorityCount(ctx, date, slot, p.id);
     const want = Math.min((targets.get(p.id) || 0) - filled, remainingAllowance);
     if (want <= 0) continue;
+    const before = ctx.scheduleRows.length;
     const added = fillPosition(ctx, date, slot, p, filled + want, pool, groupPositionIds);
+    traceEntry.assigned = ctx.scheduleRows.slice(before).filter((r) => r.priority === 1).map((r) => r.pt_id);
     remainingAllowance -= added;
     totalAdded += added;
   }
@@ -987,7 +1006,7 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
     null
   ).filter((id) => ctx.activeStaff.find((s) => s.id === id).primary_group === GROUP_SHIPPING);
 
-  fillByScarcity(ctx, date, slot, shippingPositions, shippingTargets, shippingPrimaryPool, ctx.shippingPositionIds, Infinity, "出貨組");
+  fillByScarcity(ctx, date, slot, shippingPositions, shippingTargets, shippingPrimaryPool, ctx.shippingPositionIds, Infinity, "出貨組", true);
 
   const inboundPrimaryPool = buildEligiblePool(
     inboundPositions.map((p) => p.id),
@@ -1063,7 +1082,7 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
     }
   }
 
-  fillByScarcity(ctx, date, slot, shippingPositions, shippingTargets, [...shippingInboundCandidates], ctx.shippingPositionIds, shipAllocation, "出貨優先日進貨組支援");
+  fillByScarcity(ctx, date, slot, shippingPositions, shippingTargets, [...shippingInboundCandidates], ctx.shippingPositionIds, shipAllocation, "出貨優先日進貨組支援", true);
   fillByScarcity(ctx, date, slot, inboundPositions, inboundTargets, [...inboundShippingCandidates], ctx.inboundPositionIds, inAllocation, "出貨組PT補進貨");
 
   // 填完之後，再檢查一次還有沒有真正排不出來的缺口（非週三～週五的人手不足，或分攤後仍然不夠）
