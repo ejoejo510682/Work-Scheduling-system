@@ -487,7 +487,17 @@ function isUnderWeeklyCap(ptId, staffRow, ctx, date) {
   return (ctx.ptDaysUsedThisWeek.get(ptId) || 0) < 4;
 }
 
+// 第十一次補充決議：pt_staff.auto_schedule_weekdays＝false 的人（內勤，目前是許庭瑄）週一～週五
+// 完全不自動排，只在 Cynthia 手動指派（鎖定）時出現；週六不受影響。
+function autoScheduleOk(staffRow, date) {
+  return isSaturday(date) || !staffRow || staffRow.auto_schedule_weekdays !== false;
+}
+
+// 「這個人這個時段能不能被自動排」：照當天登記的可上班範圍，再加上平日不自動排的人一律不行。
+// 幾乎所有自動排班的流程（候選池、印單、正職保底、整週先規劃、週六挑人）都經過這裡，
+// 所以平日不自動排的規則集中在這一處；手動鎖定的檢查（validateLockedRows）直接看可上班範圍，不受影響。
 function isAvailableForSlotToday(ptId, date, slot, ctx) {
+  if (!autoScheduleOk(ctx.activeStaff.find((s) => s.id === ptId), date)) return false;
   const avail = getAvailability(ptId, date, ctx.availability);
   if (!avail) {
     // 未登記可上班時間：票2 決議第十條，預設視為全天可上班，但要列入草稿提醒
@@ -839,6 +849,8 @@ function assignBackups(ctx, date, slot) {
     if (!(ctx.slotsForPosition.get(backupPosition.id) || []).includes(slot)) continue;
     if (!genderOkById(ctx, row.pt_id, backupPosition)) continue;
     if (getLevel(row.pt_id, backupPosition.id, ctx.abilities) < 2) continue;
+    // 平日不自動排的人就算被手動鎖在撿貨，也不自動幫她加備援
+    if (!autoScheduleOk(ctx.activeStaff.find((s) => s.id === row.pt_id), date)) continue;
     if (!candidatesByBackup.has(backupPosition.id)) candidatesByBackup.set(backupPosition.id, []);
     candidatesByBackup.get(backupPosition.id).push(row.pt_id);
   }
@@ -1389,7 +1401,8 @@ function assignSaturday(ctx, date, printerId) {
 
 function ensureFullTimeWorked(ctx, date, slots, skipPositionIds, isPriority) {
   const skip = skipPositionIds || new Set();
-  const fullTimers = ctx.activeStaff.filter((s) => s.employment_type === "正職");
+  // 平日不自動排的正職（內勤）不適用「一定要上工」的保底，平日的工作由 Cynthia 手動指派
+  const fullTimers = ctx.activeStaff.filter((s) => s.employment_type === "正職" && autoScheduleOk(s, date));
 
   for (const s of fullTimers) {
     const avail = getAvailability(s.id, date, ctx.availability);
@@ -1476,6 +1489,7 @@ function fillIdleInbound(ctx, date) {
     if (!(ctx.slotsForPosition.get(inbound.id) || []).includes(slot)) continue;
     const candidates = ctx.activeStaff.filter((s) => {
       if (isShippingOnlyFullTime(s)) return false;
+      if (!autoScheduleOk(s, date)) return false;
       if (s.employment_type === "PT" && !workingToday.has(s.id)) return false;
       if (s.employment_type !== "PT") {
         const a = getAvailability(s.id, date, ctx.availability);
@@ -1523,6 +1537,8 @@ function markSurplus(ctx, date) {
   // 產生（第十次補充決議：出訂單後有空的 PT 改排處理進貨，不再一律標人力過剩）。這裡只管整天沒排的人。
   for (const s of ctx.activeStaff) {
     if (assignedToday.has(s.id)) continue;
+    // 平日不自動排的人，平日沒排到是當然的，不算人力過剩（第十一次補充決議）
+    if (!autoScheduleOk(s, date)) continue;
     // 【修正 1】平日的正職不會落到「人力過剩」這個分類——規則是正職一定要上工，
     // ensureFullTimeWorked 已經處理過：排到了就不會進到這裡；真的排不進去，
     // 那邊也已經留下專屬的「需要人工處理」警示，這裡不用再重複講一次（而且講成
