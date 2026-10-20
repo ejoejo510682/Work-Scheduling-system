@@ -236,10 +236,15 @@ function buildContext(input) {
     positionById,
     // 手動鎖定的格子可能落在不納入自動排班的崗位（例如處理批發訂單），查名稱要用完整清單
     allPositionById: new Map(positions.map((p) => [p.id, p])),
-    lockedDaysByPt: new Map(), // ptId -> Set(date)：有手動鎖定格子的日子，見 applyLockedRows
+    // ptId -> Set(date)：「預先佔用」的日子＝手動鎖定格子的日子（applyLockedRows）＋有優先人選
+    // 的崗位整週先規劃排到的日子（planPreferredPositions）。這些日子一開始就算進 PT 4 天上限
+    lockedDaysByPt: new Map(),
+    // 第十次補充決議：崗位優先人選 position_id -> [pt_id...]（rank 小的在前）
+    preferredByPosition: buildPreferredMap(input),
     lastSaturday: buildLastSaturdayMap(input), // ptId -> 最近一次上週六的日期（週六輪流用）
     saturdayRotation: null, // 這週六怎麼挑人的說明（畫面上顯示用），見 assignSaturday
     fillTrace: [], // 每個時段崗位的補人順序與「能排人數」（驗證能排的人越少越先排用），見 fillByScarcity
+    preferredPlan: [], // 有優先人選的崗位整週先規劃的結果，見 planPreferredPositions
     headcountByPosition,
     activeStaff,
     abilities,
@@ -291,6 +296,16 @@ function occupiedCount(ctx, date, slot, positionId) {
 function hasCapacity(ctx, date, slot, position) {
   if (position.max_headcount == null) return true;
   return occupiedCount(ctx, date, slot, position.id) < position.max_headcount;
+}
+
+function buildPreferredMap(input) {
+  const map = new Map();
+  const rows = [...(input.positionPreferredStaff || [])].sort((a, b) => a.rank - b.rank);
+  for (const r of rows) {
+    if (!map.has(r.position_id)) map.set(r.position_id, []);
+    map.get(r.position_id).push(r.pt_id);
+  }
+  return map;
 }
 
 function canWorkSaturday(staffRow) {
@@ -521,7 +536,13 @@ function fillPosition(ctx, date, slot, position, target, candidatePool, groupPos
   const remainingPool = candidatePool.filter(
     (id) => !isAssignedThisSlot(ctx, date, slot, id) && genderOkById(ctx, id, position)
   );
-  const ranked = rankCandidates(remainingPool, ctx, groupPositionIdsForRanking);
+  // 第十次補充決議：這個崗位有設優先人選的話，候選池裡的優先人選照 rank 排在最前面，
+  // 其他人再照一般挑人順序（能力、性別、可上班、4 天上限等條件，候選池跟下面的能力檢查已經處理）
+  const preferred = (ctx.preferredByPosition.get(position.id) || []).filter((id) => remainingPool.includes(id));
+  const ranked = [
+    ...preferred,
+    ...rankCandidates(remainingPool.filter((id) => !preferred.includes(id)), ctx, groupPositionIdsForRanking),
+  ];
 
   let added = 0;
   // 第一輪：三級的人（target 已經在 baseTarget 裡鉏過 max_headcount，這裡的
@@ -936,7 +957,11 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
   // 目標人數：先算「理論基準」
   const shippingTargets = new Map(shippingPositions.map((p) => [p.id, baseTarget(p, ctx, isPriority, extraHeadcount, date)]));
   let inboundTargets;
-  if (isMonTue) {
+  if (!NON_SHIPPING_SLOTS.includes(slot)) {
+    // 第十次補充決議：出訂單後時段的處理進貨不設人數（目標 0、不跳缺人提醒）。出貨崗位排完之後，
+    // 進貨組的人跟還有空的 PT 才由 fillIdleInbound 補進處理進貨，出貨崗位永遠優先
+    inboundTargets = new Map(inboundPositions.map((p) => [p.id, 0]));
+  } else if (isMonTue) {
     // 週一週二：進貨保底 2 人，不是逐崗位基準人數加總
     inboundTargets = new Map(inboundPositions.map((p) => [p.id, 0]));
     let remaining = 2;
@@ -1403,19 +1428,21 @@ function ensureFullTimeWorked(ctx, date, slots, skipPositionIds, isPriority) {
 }
 
 // ----------------------------------------------------------------------------
-// 十五之二、非出貨時段補處理進貨（第八、九次補充決議）
+// 十五之二、沒事做的人補處理進貨（第八、九、十次補充決議）
 //
-// 每天正常排完之後，非出貨時段（上午出訂單前、下午出訂單前、出貨完成後）還沒有第一任務
-// 的 PT，每天都補去「處理進貨」：
-//   - 只補「當天本來就有上班」的 PT（不會為了補處理進貨多排一天，PT 4 天上限不受影響），
-//     並照當天可上班範圍（只上午／只下午）
-//   - 決議寫的是「沒有其他工作的 PT」，所以進貨組的 PT 也一樣補
-//   - 出貨組正職不補（第九次補充決議：出貨組正職只自動排出貨工作，其他由 Cynthia 手動安排）
-// 這些處理進貨不設上限、不受處理進貨基準人數限制。能力規則照舊：三級可以直接排，
-// 二級要這個時段處理進貨已經有三級的人才能排；排不進去的會留一條提示。
+// 每天正常排完（出貨崗位都排好）之後，每個有開處理進貨的時段（第十次起 5 個時段都開），
+// 還沒有第一任務的人補去「處理進貨」，不設上限、不受處理進貨基準人數限制：
+//   - PT（出貨組、進貨組都算）：只補「當天本來就有上班」的人（不會為了補處理進貨多排一天，
+//     PT 4 天上限不受影響），並照當天可上班範圍（只上午／只下午）
+//   - 進貨組正職（連陳軒）：照進貨組規則，當天有上班就補
+//   - 出貨組正職不補（第九次補充決議：只自動排出貨工作，其他由 Cynthia 手動安排）
+// 出訂單後時段的處理進貨本來就沒有人數目標（見 assignSlot），所以那兩個時段的處理進貨全部
+// 是在這裡、出貨崗位排完之後才補的——不會為了湊進貨人數把人從出貨崗位拉走。
+// 能力規則照舊：三級直接排，二級要這個時段處理進貨已經有三級的人才能排；真的排不進去的，
+// 留一條「這個時段沒有工作（人力過剩）」提醒並寫出原因，由 Cynthia 手動安排。
 // ----------------------------------------------------------------------------
 
-function fillIdleNonShippingSlots(ctx, date) {
+function fillIdleInbound(ctx, date) {
   const inbound = ctx.positions.find((p) => p.name === "處理進貨");
   if (!inbound) return;
   const workingToday = new Set(
@@ -1426,11 +1453,15 @@ function fillIdleNonShippingSlots(ctx, date) {
       (r) => r.date === date && r.slot === slot && r.position_id === inbound.id && getLevel(r.pt_id, inbound.id, ctx.abilities) === 3
     );
 
-  for (const slot of NON_SHIPPING_SLOTS) {
+  for (const slot of SLOTS) {
     if (!(ctx.slotsForPosition.get(inbound.id) || []).includes(slot)) continue;
     const candidates = ctx.activeStaff.filter((s) => {
-      if (s.employment_type !== "PT") return false;
-      if (!workingToday.has(s.id)) return false;
+      if (isShippingOnlyFullTime(s)) return false;
+      if (s.employment_type === "PT" && !workingToday.has(s.id)) return false;
+      if (s.employment_type !== "PT") {
+        const a = getAvailability(s.id, date, ctx.availability);
+        if (a && a.range === "全天休假") return false;
+      }
       if (isAssignedThisSlot(ctx, date, slot, s.id)) return false;
       if (!genderOk(s, inbound)) return false;
       const avail = getAvailability(s.id, date, ctx.availability);
@@ -1447,9 +1478,11 @@ function fillIdleNonShippingSlots(ctx, date) {
     }
     for (const s of unplaced) {
       ctx.warnings.push({
-        type: "info",
+        type: "surplus",
         date,
-        message: `${date} ${slot}：${s.name} 當天有上班，但處理進貨能力${getLevel(s.id, inbound.id, ctx.abilities) === 2 ? "是二級、這個時段沒有三級的同事陪同" : "是一級"}，這個時段排不進處理進貨，需要人工安排`,
+        slot,
+        ptId: s.id,
+        message: `${s.name} ${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${slot} 沒有工作（人力過剩）：處理進貨能力${getLevel(s.id, inbound.id, ctx.abilities) === 2 ? "是二級、這個時段沒有三級的同事陪同" : "是一級"}，排不進處理進貨，需要人工安排`,
       });
     }
   }
@@ -1467,25 +1500,8 @@ function fillIdleNonShippingSlots(ctx, date) {
 function markSurplus(ctx, date) {
   const assignedToday = new Set(ctx.scheduleRows.filter((r) => r.date === date && r.priority === 1).map((r) => r.pt_id));
 
-  // 第九次補充決議：PT 當天有上班，但在「出訂單後」的出貨時段沒排到工作 → 不自動補，
-  // 在提醒裡標成「人力過剩」並寫清楚是哪個時段，由 Cynthia 手動安排（平日才看；週六是固定小隊）
-  if (!isSaturday(date)) {
-    for (const s of ctx.activeStaff) {
-      if (s.employment_type !== "PT" || !assignedToday.has(s.id)) continue;
-      for (const slot of SLOTS.filter((x) => !NON_SHIPPING_SLOTS.includes(x))) {
-        if (!isAvailableForSlotToday(s.id, date, slot, ctx)) continue;
-        if (isAssignedThisSlot(ctx, date, slot, s.id)) continue;
-        ctx.warnings.push({
-          type: "surplus",
-          date,
-          slot,
-          ptId: s.id,
-          message: `${s.name} ${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${slot} 沒有工作（人力過剩）`,
-        });
-      }
-    }
-  }
-
+  // 時段層級的「人力過剩」（某人某時段沒有工作）只剩真的排不進任何工作的情況，由 fillIdleInbound
+  // 產生（第十次補充決議：出訂單後有空的 PT 改排處理進貨，不再一律標人力過剩）。這裡只管整天沒排的人。
   for (const s of ctx.activeStaff) {
     if (assignedToday.has(s.id)) continue;
     // 【修正 1】平日的正職不會落到「人力過剩」這個分類——規則是正職一定要上工，
@@ -1515,6 +1531,73 @@ function markSurplus(ctx, date) {
       type: "surplus",
       date,
       message: `${date}：${s.name} 當天可上班但沒有被排進任何崗位（人力過剩）`,
+    });
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 十六之一、有優先人選的崗位：整週先規劃（第十次補充決議）
+//
+// 排完週六、排平日其他崗位之前，先把有設優先人選的崗位（目前只有出箱貨：林清瑞 → 李睿懷）
+// 週一到週五每一天的人排好，排好的格子之後就當成固定的，平日每個時段的「越少越先排」
+// 不會再動它們，而且那幾天一開始就算進 PT 4 天上限（等於替他預留了天數）。
+//
+// 做法（適用於任何有優先人選的崗位）：照優先順序一個一個人來——
+//   1. 先算這個人本週還能多排幾天（PT＝4 減掉已經用掉的天數，週六、手動鎖定都算；正職不限）
+//   2. 找出他能做的日子：那天這個崗位的時段他可以上班、能力三級、性別符合、組別規則允許
+//      （進貨組的人只有出貨優先日能排出貨崗位）、那個時段沒被鎖在別的崗位，而且那天還缺人
+//   3. 日子不夠他全部做時，先挑「後面的優先人選做不了」的日子，留下後面的人也能做的日子給他們
+//      （這就是替後面的人保留天數）；同樣情況照日期先後
+//   4. 排進去，再輪到下一個優先人選補剩下沒人的日子
+// 優先人選都排不了的日子，留給平日一般流程照一般挑人順序補（崗位內仍是優先人選先挑）。
+// ----------------------------------------------------------------------------
+
+function planPreferredPositions(ctx, weekdays) {
+  for (const [positionId, prefIds] of ctx.preferredByPosition) {
+    const position = ctx.positionById.get(positionId);
+    if (!position) continue; // 不納入自動排班的崗位不規劃
+    const slots = ctx.slotsForPosition.get(positionId) || [];
+    const people = prefIds.map((id) => ctx.activeStaff.find((s) => s.id === id)).filter(Boolean);
+
+    const need = new Map(); // date|slot -> 還缺幾人
+    for (const d of weekdays) {
+      const info = isPriorityShippingDay(d, ctx.specialDates);
+      const target = baseTarget(position, ctx, info.isPriority, info.extraHeadcount, d);
+      for (const sl of slots) need.set(`${d}|${sl}`, Math.max(0, target - currentPriorityCount(ctx, d, sl, positionId)));
+    }
+    const coverableSlots = (s, d) => {
+      const isPriority = isPriorityShippingDay(d, ctx.specialDates).isPriority;
+      if (position.group === GROUP_SHIPPING && s.primary_group !== GROUP_SHIPPING && !isPriority) return [];
+      if (!genderOk(s, position) || getLevel(s.id, positionId, ctx.abilities) !== 3) return [];
+      return slots.filter(
+        (sl) => need.get(`${d}|${sl}`) > 0 && isAvailableForSlotToday(s.id, d, sl, ctx) && !isAssignedThisSlot(ctx, d, sl, s.id)
+      );
+    };
+    const booked = (s, d) => (ctx.lockedDaysByPt.get(s.id) || new Set()).has(d);
+
+    people.forEach((s, idx) => {
+      const lowerRanked = people.slice(idx + 1);
+      const days = weekdays
+        .filter((d) => coverableSlots(s, d).length > 0)
+        .map((d) => ({ d, others: lowerRanked.filter((o) => coverableSlots(o, d).length > 0).length, free: booked(s, d) }))
+        .sort((a, b) => (b.free ? 1 : 0) - (a.free ? 1 : 0) || a.others - b.others || (a.d < b.d ? -1 : 1));
+      let capacity = s.employment_type === "PT" ? 4 - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) : Infinity;
+      for (const { d, free } of days) {
+        if (!free && capacity <= 0) continue;
+        const toFill = coverableSlots(s, d);
+        if (toFill.length === 0) continue;
+        for (const sl of toFill) {
+          commitAssignment(ctx, d, sl, position, s.id, 1);
+          need.set(`${d}|${sl}`, need.get(`${d}|${sl}`) - 1);
+        }
+        ctx.preferredPlan.push({ positionId, date: d, ptId: s.id, rank: idx + 1 });
+        if (!free) {
+          if (!ctx.lockedDaysByPt.has(s.id)) ctx.lockedDaysByPt.set(s.id, new Set());
+          ctx.lockedDaysByPt.get(s.id).add(d);
+          ctx.ptDaysUsedThisWeek.set(s.id, (ctx.ptDaysUsedThisWeek.get(s.id) || 0) + 1);
+          capacity--;
+        }
+      }
     });
   }
 }
@@ -1585,8 +1668,8 @@ function generateWeekSchedule(input) {
       }
       // 【修正 1】正常流程跑完後，保底檢查今天所有正職是不是都真的被排到工作了
       ensureFullTimeWorked(ctx, date, SLOTS, skip, info.isPriority);
-      // 【第八次補充決議】非出貨時段還沒事做的出貨組人員補去處理進貨
-      fillIdleNonShippingSlots(ctx, date);
+      // 【第八～十次補充決議】出貨崗位排完後，還沒事做的 PT（跟進貨組正職）補去處理進貨
+      fillIdleInbound(ctx, date);
     }
 
     // 更新本週已使用天數 + 算人力過剩（手動鎖定的日子一開始就算過了，不重複加）
@@ -1598,6 +1681,9 @@ function generateWeekSchedule(input) {
       }
     }
     markSurplus(ctx, date);
+
+    // 週六排完、平日開始之前：有優先人選的崗位先把整週排好（第十次補充決議）
+    if (isSaturday(date)) planPreferredPositions(ctx, weekDates.filter((d) => !isSaturday(d) && !isSunday(d)));
   }
 
   // 排班是週六先排，輸出照日期、時段排好，方便閱讀跟比對
@@ -1605,7 +1691,13 @@ function generateWeekSchedule(input) {
   const schedule = [...ctx.scheduleRows].sort((a, b) =>
     a.date !== b.date ? (a.date < b.date ? -1 : 1) : slotIndex(a.slot) - slotIndex(b.slot)
   );
-  return { schedule, warnings: ctx.warnings, saturdayRotation: ctx.saturdayRotation, fillTrace: ctx.fillTrace };
+  return {
+    schedule,
+    warnings: ctx.warnings,
+    saturdayRotation: ctx.saturdayRotation,
+    fillTrace: ctx.fillTrace,
+    preferredPlan: ctx.preferredPlan,
+  };
 }
 
 // ----------------------------------------------------------------------------
