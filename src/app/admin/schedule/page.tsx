@@ -3,11 +3,14 @@ import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, getDefaultWeekMonday, getMonday, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
 import { ecommerceCampaignLabel } from "@/lib/specialDates";
+// 票3 草稿提醒 UI 原型（只在 prototype/schedule-ui 分支）：有 ?variant=A|B|C 時改顯示原型，沒有就是原本的頁面
+import { PrototypeShell, VARIANTS, type VariantKey } from "./_prototype/PrototypeShell";
+import { ADDED_AFTER_DRAFT, DRAFT_GENERATED_AT, FALLBACK_SPECIAL_DATES, FIXTURE_WEEK, initialManualRows } from "./_prototype/fixture";
 
 export default async function SchedulePage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string }>;
+  searchParams: Promise<{ week?: string; variant?: string }>;
 }) {
   await requireRole(["主管", "排班人員"]);
 
@@ -17,6 +20,8 @@ export default async function SchedulePage({
   const prevWeek = addDays(monday, -7);
   const nextWeek = addDays(monday, 7);
   const sunday = addDays(monday, 6);
+  const variant = VARIANTS.find((v) => v.key === params.variant)?.key as VariantKey | undefined;
+  const variantQuery = variant ? `&variant=${variant}` : "";
 
   const supabase = await createClient();
   const { data: specialDates } = await supabase
@@ -31,6 +36,28 @@ export default async function SchedulePage({
     holidayNamesByDate.set(sd.date, list);
   }
 
+  // 原型：特殊日期讀資料庫（連假要看前後幾天，所以多抓前兩週、後兩週）；資料庫這週沒資料時用假資料
+  let prototypeProps = null;
+  if (variant) {
+    const { data: rows } = await supabase
+      .from("special_dates")
+      .select("date, type, name")
+      .gte("date", addDays(monday, -14))
+      .lte("date", addDays(monday, 13));
+    const fromDb = (rows ?? []).map((r) => ({ date: r.date as string, type: r.type as string, name: r.name as string }));
+    const useFallback = fromDb.length === 0 && monday === FIXTURE_WEEK;
+    const current = useFallback ? FALLBACK_SPECIAL_DATES : fromDb;
+    const snapshot = monday === FIXTURE_WEEK ? current.filter((r) => !ADDED_AFTER_DRAFT.includes(r.date)) : current;
+    prototypeProps = {
+      monday,
+      currentSpecialDates: current,
+      snapshotSpecialDates: snapshot,
+      initialManualRows: initialManualRows(monday, addDays),
+      generatedAt: monday === FIXTURE_WEEK ? DRAFT_GENERATED_AT : "剛剛",
+      specialDatesSource: useFallback ? ("原型假資料" as const) : ("資料庫" as const),
+    };
+  }
+
   return (
     <div>
       <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">週排班表</h1>
@@ -40,7 +67,7 @@ export default async function SchedulePage({
 
       <div className="mt-4 flex items-center gap-3">
         <Link
-          href={`/admin/schedule?week=${prevWeek}`}
+          href={`/admin/schedule?week=${prevWeek}${variantQuery}`}
           className="rounded border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
         >
           ← 上一週
@@ -49,7 +76,7 @@ export default async function SchedulePage({
           {monday} ～ {addDays(monday, 6)}
         </span>
         <Link
-          href={`/admin/schedule?week=${nextWeek}`}
+          href={`/admin/schedule?week=${nextWeek}${variantQuery}`}
           className="rounded border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
         >
           下一週 →
@@ -68,6 +95,9 @@ export default async function SchedulePage({
         </Link>
       </div>
 
+      {variant && prototypeProps ? (
+        <PrototypeShell key={monday} variant={variant} {...prototypeProps} />
+      ) : (
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4 md:grid-cols-7">
         {days.map((date, i) => {
           const holidayNames = holidayNamesByDate.get(date) ?? [];
@@ -103,6 +133,7 @@ export default async function SchedulePage({
           );
         })}
       </div>
+      )}
     </div>
   );
 }
