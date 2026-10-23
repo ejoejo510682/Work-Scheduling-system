@@ -682,12 +682,12 @@ function computePrinterRotation(input, ctx) {
     }
   }
 
-  // 第十二次補充決議：正職印單的「第三天」
+  // 正職印單的「第三天」（第十二次補充決議，第十三次修正）
   //   1. 當週週二～週五有出貨優先日 → 選出貨優先日（有好幾天時選最早）
-  //   2. 沒有 → 選「沒有任何會印單的 PT 可上班」的那天：看當天的可上班登記，印訂單三級、
-  //      平日有納入自動排班的 PT，沒有一位兩個「出訂單前」時段都能上班；符合的不只一天選最早
-  //   3. 都找不到 → 沒有第三天。週二～週五裡 PT 照 2＋1 輪排拿 3 天，剩下那一天（選最早的
-  //      那天，跟上面「選最早」一致）印訂單留空並跳提醒，由 Cynthia 手動安排
+  //   2. 沒有 → 週二～週五裡如果有「沒有任何會印單的 PT 可上班」的日子（看當天的可上班登記：
+  //      印訂單三級、平日有納入自動排班的 PT，沒有一位兩個「出訂單前」時段都能上班），那天一定要有人印，
+  //      由王瀞玉印，算她的第三天；符合的不只一天選最早
+  //   3. 都沒有 → 週二～週五全部照 PT 輪排印，不留空；整週只跳一條「本週正職第三天請手動指定」
   const priorityWeekday = weekDates
     .slice(1, 5) // 二～五
     .find((d) => priorityInfoByDate.get(d).isPriority);
@@ -705,19 +705,13 @@ function computePrinterRotation(input, ctx) {
     );
   const thirdDay = priorityWeekday || noPtPrinterDays[0] || null;
   const thirdDayReason = priorityWeekday ? "出貨優先日" : thirdDay ? "沒有會印單的 PT 可上班" : null;
-  const emptyDays = new Set();
   if (!thirdDay) {
-    const empty = weekDates.slice(1, 5).find((d) => !lockedPrinterByDate.has(d));
-    if (empty) {
-      emptyDays.add(empty);
-      ctx.warnings.push({
-        type: "manual",
-        date: empty,
-        message: `${empty}（週${WEEKDAY_NAMES[getWeekdayIndex(empty)]}）印訂單留空：本週沒有出貨優先日，週二～週五每天也都有會印單的 PT 可上班，找不到正職印單的第三天，這天的印訂單請 Cynthia 手動安排`,
-      });
-    }
+    ctx.warnings.push({
+      type: "manual",
+      date: input.weekStart,
+      message: "本週正職第三天請手動指定（本週沒有出貨優先日，週二～週五每天也都有會印單的 PT 可上班；週二～週五先照 PT 輪排印單）",
+    });
   }
-
   // 平日的正職印單日（週一、第 3 天）固定由 input.weekdayFtPrinterId 指定的正職負責
   // （第七次補充決議：王瀞玉）。她當天請假或沒空時，resolvePrinterForDate 會照原本的
   // 規則找其他符合資格的人頂上並留下提醒。沒有指定（或指定的人不會印單）才退回舊做法：
@@ -785,8 +779,8 @@ function computePrinterRotation(input, ctx) {
   assignments.set(saturday, pickSaturdayFullTime());
   if (thirdDay) assignments.set(thirdDay, pickFullTimePrinter(thirdDay));
 
-  // PT 的 3 天 = 剩下的平日（二～五，去掉第三天、留空的那天）；被手動鎖定印單的日子直接照鎖定的人
-  const ptDaysAll = weekDates.slice(1, 5).filter((d) => d !== thirdDay && !emptyDays.has(d));
+  // PT 的天數 = 剩下的平日（二～五，去掉第三天；沒有第三天就是 4 天）；被手動鎖定印單的日子直接照鎖定的人
+  const ptDaysAll = weekDates.slice(1, 5).filter((d) => d !== thirdDay);
   for (const d of ptDaysAll) if (lockedPrinterByDate.has(d)) assignments.set(d, lockedPrinterByDate.get(d));
   const ptDays = ptDaysAll.filter((d) => !lockedPrinterByDate.has(d));
   const lockedPtPrinterDays = (ptId) => ptDaysAll.filter((d) => lockedPrinterByDate.get(d) === ptId).length;
@@ -826,16 +820,19 @@ function computePrinterRotation(input, ctx) {
       });
       for (const d of ptDays) assignments.set(d, primary.id);
     } else {
-      // primary 拿 2 天、secondary 拿 1 天；已經被手動鎖定印單的天數先扣掉
+      // primary 拿 2 天、secondary 拿 1 天；已經被手動鎖定印單的天數先扣掉。
+      // 沒有正職第三天的週，PT 要印週二～週五 4 天：前 3 天照 2＋1，多出來的第 4 天給 secondary
+      // （變成 2＋2，不讓同一人印 3 天；這一天通常就是 Cynthia 要手動改給正職的那天）
       const queue = [
         ...Array(Math.max(0, 2 - lockedPtPrinterDays(primary.id))).fill(primary.id),
         ...Array(Math.max(0, 1 - lockedPtPrinterDays(secondary.id))).fill(secondary.id),
+        ...(thirdDay ? [] : [secondary.id]),
       ];
       ptDays.forEach((d, i) => assignments.set(d, queue[i] || primary.id));
     }
   }
 
-  return { assignments, thirdDay, thirdDayReason, emptyDays, priorityInfoByDate };
+  return { assignments, thirdDay, thirdDayReason, priorityInfoByDate };
 }
 
 // computePrinterRotation 是在「一週開始前」一次決定好輪排名單的純函式，不知道排班
@@ -1024,16 +1021,27 @@ function fillByScarcity(ctx, date, slot, positions, targets, pool, groupPosition
   return added + fillByScarcityRound(ctx, date, slot, positions, targets, pool, groupPositionIds, allowance - added, stage, 2);
 }
 
+// 「整體會做的人」：在職、這天有納入自動排班、這個崗位三級、性別符合的人數（不看今天有沒有空），
+// 用來比較崗位本身有多難找人
+function capableCount(ctx, position, date) {
+  return ctx.activeStaff.filter(
+    (s) => autoScheduleOk(s, date) && genderOk(s, position) && getLevel(s.id, position.id, ctx.abilities) === 3
+  ).length;
+}
+
 function fillByScarcityRound(ctx, date, slot, positions, targets, pool, groupPositionIds, allowance, stage, round) {
   let remainingAllowance = allowance;
   let totalAdded = 0;
   const remaining = positions.filter((p) => (targets.get(p.id) || 0) > currentPriorityCount(ctx, date, slot, p.id));
   let order = 0;
   while (remaining.length > 0 && remainingAllowance > 0) {
-    const scored = remaining.map((p, i) => ({ p, i, n: placeableCount(ctx, date, slot, p, pool) }));
+    const scored = remaining.map((p, i) => ({ p, i, n: placeableCount(ctx, date, slot, p, pool), capable: capableCount(ctx, p, date) }));
     scored.sort(
       (a, b) =>
         a.n - b.n ||
+        // 第十三次補充決議：第一輪（各崗位先 1 人）同樣少時，整體會做的人越少的崗位先拿到人
+        // （例如人只夠 2 個崗位時，無包裝出貨比撿貨、包裝先排）
+        (round === 1 ? a.capable - b.capable : 0) ||
         (b.p.gender_restriction ? 1 : 0) - (a.p.gender_restriction ? 1 : 0) ||
         (ctx.headcountByPosition.get(b.p.id) || 0) - (ctx.headcountByPosition.get(a.p.id) || 0) ||
         a.i - b.i
@@ -1801,11 +1809,12 @@ function commitTask(ctx, date, slot, position, ptId, kind) {
   }
 }
 
-// 系統挑人的順序（「最適合」）：
-//   1. 這個任務的能力三級優先（二級要有三級的人先排進去才能排）
-//   2. 平日不自動排的人（內勤）優先——她們平日本來就不會被排去出貨，挑她們最不影響出貨
-//   3. 三級出貨崗位少的優先——把出貨的主力留給出貨崗位
-//   4. 本週已排天數少的優先，最後用姓名（讓結果每次都一樣）
+// 系統挑人的順序（第十三次補充決議）：
+//   0. 平日不自動排的人（內勤，auto_schedule_weekdays＝false）一律排最後：其他人都不符合資格才挑她們
+//   1. 這個任務的能力等級高的優先（二級要有三級的人先排進去才能排）
+//   2. 三級出貨崗位少的優先——把出貨的主力留給出貨崗位
+//   3. 本週已排天數少的優先，最後用姓名（讓結果每次都一樣）
+// 固定任務指定的代班人員（例如出貨完成後的許庭瑄）不受這個順序影響
 function pickTaskPeople(ctx, rotation, position, date, slot, count) {
   const fullTimeOnly = position.name === "處理退貨";
   const picked = [];
@@ -1816,8 +1825,8 @@ function pickTaskPeople(ctx, rotation, position, date, slot, count) {
     if (pool.length === 0) break;
     pool.sort(
       (a, b) =>
+        (a.auto_schedule_weekdays === false ? 1 : 0) - (b.auto_schedule_weekdays === false ? 1 : 0) ||
         getLevel(b.id, position.id, ctx.abilities) - getLevel(a.id, position.id, ctx.abilities) ||
-        (a.auto_schedule_weekdays === false ? 0 : 1) - (b.auto_schedule_weekdays === false ? 0 : 1) ||
         countLevel3(a.id, ctx.abilities, ctx.shippingPositionIds) - countLevel3(b.id, ctx.abilities, ctx.shippingPositionIds) ||
         (ctx.ptDaysUsedThisWeek.get(a.id) || 0) - (ctx.ptDaysUsedThisWeek.get(b.id) || 0) ||
         a.name.localeCompare(b.name, "zh-Hant")
@@ -1975,9 +1984,6 @@ function generateWeekSchedule(input) {
         // 這個時段的印訂單已經被手動鎖定（不管鎖的是誰）就不重複排
         if (currentPriorityCount(ctx, date, slot, printerPosition.id) > 0) {
           printerHandledSlots.add(slot);
-        } else if (rotation.emptyDays.has(date)) {
-          // 找不到正職印單第三天：這天印訂單刻意留空，一般流程也不補（已在 computePrinterRotation 提醒）
-          printerHandledSlots.add(slot);
         } else if (printerId) {
           bumpTemplateTask(ctx, date, slot, printerId);
           if (!isAssignedThisSlot(ctx, date, slot, printerId)) {
@@ -2036,7 +2042,6 @@ function generateWeekSchedule(input) {
     printerPlan: {
       thirdDay: rotation.thirdDay,
       thirdDayReason: rotation.thirdDayReason,
-      emptyDays: [...rotation.emptyDays],
       assignments: Object.fromEntries(rotation.assignments),
     },
   };
