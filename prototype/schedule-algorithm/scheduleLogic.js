@@ -77,24 +77,55 @@ function ecommerceCampaignLabel(dateStr) {
 }
 
 // ----------------------------------------------------------------------------
-// 四、出貨優先日判斷（第十四次補充決議重新定義）
+// 四、出貨優先日判斷（第十四、十五次補充決議）
 //
-// 「不上班日」＝週日、國定假日（週六是國定假日也算）。不上班日完全不排班，也不是出貨優先日。
-// 出貨優先日（撿貨、包裝、無包裝出貨、出箱貨 +1，仍受 max_headcount 限制）：
-//   (a) 檔期活動日：雙字日／18號／25號，或 special_dates 的「電商檔期」。檔期剛好落在不上班日，
-//       就順延到下一個上班日（例：25 號是週日 → 26 號週一算檔期）
-//   (b) 一段連續不上班日（裡面至少有一天國定假日）之後的「第一個」上班日（第二個上班日不再算）
+// 「不上班日」（不排班）＝週日、國定假日（週六是國定假日也算）。一般的週六照常上班。
+// 「連假」＝連續的週六、週日、國定假日（補假、颱風假也存成國定假日），裡面至少要有一天國定假日；
+//   一般的週末不算連假。連假天數照行事曆算，一般週六只要夾在裡面也算進去
+//   （例：10/24 六、10/25 日光復節、10/26 一補假 → 3 天）。
+// 出貨優先日（撿貨、包裝、無包裝出貨、出箱貨 +1，仍受 max_headcount 限制），只會落在
+// 「上班的平日」（週一～週五、不是國定假日），週六一律不是出貨優先日：
+//   (a) 檔期活動日：雙字日／18號／25號，或 special_dates 的「電商檔期」。檔期落在週六、週日或
+//       國定假日，就順延到下一個上班的平日（例：25 號是週六或週日 → 下週一）
+//   (b) 連假後：連假 1～3 天 → 連假後第 1 個上班的平日；連假 4 天以上 → 連假後第 1、2 個上班的平日
+//       （春節先照 4 天以上處理，另外提醒規則待確認）
 //   (c) special_dates 的「出貨優先日」：Cynthia 手動設定（例如臨時大量訂單）
 // 同一天符合好幾個理由也只加一次：有 special_dates 列設定 extra_headcount 就用那個值（好幾列取最大），
 // 沒有就是 +1。
 // ----------------------------------------------------------------------------
 
+const SPRING_FESTIVAL_NAMES = ["春節", "農曆除夕", "小年夜"];
+
 function isHolidayDate(dateStr, specialDates) {
   return specialDates.some((s) => s.date === dateStr && s.type === "國定假日");
 }
 
+// 排班用：週日、國定假日不上班；一般週六照常上班
 function isWorkingDay(dateStr, specialDates) {
   return !isSunday(dateStr) && !isHolidayDate(dateStr, specialDates);
+}
+
+// 出貨優先日只會落在這種日子：週一～週五、不是國定假日
+function isWorkingWeekday(dateStr, specialDates) {
+  return getWeekdayIndex(dateStr) <= 4 && !isHolidayDate(dateStr, specialDates);
+}
+
+// 連假裡的一天：週六、週日、國定假日
+function isRunDay(dateStr, specialDates) {
+  return getWeekdayIndex(dateStr) >= 5 || isHolidayDate(dateStr, specialDates);
+}
+
+// 剛好在 dateStr 前一天結束的連假（往回找連續的週六／週日／國定假日，裡面要有國定假日），沒有回傳 null
+function holidayRunEndingBefore(dateStr, specialDates) {
+  const days = [];
+  for (let back = 1; back <= 60; back++) {
+    const d = addDaysStr(dateStr, -back);
+    if (!isRunDay(d, specialDates)) break;
+    days.unshift(d);
+  }
+  const rows = specialDates.filter((s) => s.type === "國定假日" && days.includes(s.date));
+  if (rows.length === 0) return null;
+  return { start: days[0], end: days[days.length - 1], length: days.length, rows };
 }
 
 // 這天本身的檔期理由（規律或 special_dates 的電商檔期列），沒有回傳 null
@@ -107,38 +138,49 @@ function campaignOn(dateStr, specialDates) {
 
 /**
  * 判斷某天是不是「出貨優先日」，以及加人數是多少。
- * 回傳 { isPriority, reason, extraHeadcount, nonWorking }；不上班日一律 isPriority=false、nonWorking=true。
+ * 回傳 { isPriority, reason, extraHeadcount, nonWorking, springFestival }；
+ * 不上班日（週日、國定假日）nonWorking=true；週六、不上班日一律 isPriority=false。
  */
 function isPriorityShippingDay(dateStr, specialDates) {
-  if (!isWorkingDay(dateStr, specialDates)) {
-    return { isPriority: false, reason: null, extraHeadcount: 0, nonWorking: true };
-  }
+  const none = (nonWorking) => ({ isPriority: false, reason: null, extraHeadcount: 0, nonWorking, springFestival: false });
+  if (!isWorkingDay(dateStr, specialDates)) return none(true);
+  if (!isWorkingWeekday(dateStr, specialDates)) return none(false); // 一般週六照常上班，但不是出貨優先日
+
   const reasons = [];
   const rows = [];
+  let springFestival = false;
 
   const own = campaignOn(dateStr, specialDates);
   if (own) {
     reasons.push(own.label);
     if (own.row) rows.push(own.row);
   }
-
-  // 往回看緊接在今天之前的連續不上班日：裡面的檔期順延到今天；裡面有國定假日，今天就是連假後第一個上班日
-  let hadHoliday = false;
-  for (let back = 1; back <= 14; back++) {
+  // 緊接在今天之前、不是上班平日的日子（週六、週日、國定假日）：裡面的檔期順延到今天
+  for (let back = 1; back <= 60; back++) {
     const d = addDaysStr(dateStr, -back);
-    if (isWorkingDay(d, specialDates)) break;
+    if (isWorkingWeekday(d, specialDates)) break;
     const moved = campaignOn(d, specialDates);
     if (moved) {
-      reasons.push(`${moved.label}（${d} 不上班，順延到這天）`);
+      reasons.push(`${moved.label}（${d} 不是上班的平日，順延到這天）`);
       if (moved.row) rows.push(moved.row);
     }
-    const holiday = specialDates.find((s) => s.date === d && s.type === "國定假日");
-    if (holiday) {
-      hadHoliday = true;
-      rows.push(holiday);
-    }
   }
-  if (hadHoliday) reasons.push("連假後第一個上班日");
+
+  // 連假後第 1 個上班平日
+  const addRun = (run, nth) => {
+    reasons.push(`連假（${run.start}～${run.end}，共 ${run.length} 天）後第 ${nth} 個上班日`);
+    rows.push(...run.rows);
+    if (run.rows.some((r) => SPRING_FESTIVAL_NAMES.some((n) => (r.name || "").includes(n)))) springFestival = true;
+  };
+  const run1 = holidayRunEndingBefore(dateStr, specialDates);
+  if (run1) addRun(run1, 1);
+  // 連假 4 天以上 → 第 2 個上班平日也算：往回跳過一般週末，找到前一個上班平日，看它是不是某個 4 天以上連假後的第 1 天
+  let prev = addDaysStr(dateStr, -1);
+  while (getWeekdayIndex(prev) >= 5 && !isHolidayDate(prev, specialDates)) prev = addDaysStr(prev, -1);
+  if (!run1 && isWorkingWeekday(prev, specialDates)) {
+    const run0 = holidayRunEndingBefore(prev, specialDates);
+    if (run0 && run0.length >= 4) addRun(run0, 2);
+  }
 
   const manual = specialDates.find((s) => s.date === dateStr && s.type === "出貨優先日");
   if (manual) {
@@ -146,13 +188,14 @@ function isPriorityShippingDay(dateStr, specialDates) {
     rows.push(manual);
   }
 
-  if (reasons.length === 0) return { isPriority: false, reason: null, extraHeadcount: 0, nonWorking: false };
+  if (reasons.length === 0) return none(false);
   const setExtras = rows.filter((r) => r.extra_headcount != null).map((r) => r.extra_headcount);
   return {
     isPriority: true,
     reason: reasons.join("、"),
     extraHeadcount: setExtras.length > 0 ? Math.max(...setExtras) : 1,
     nonWorking: false,
+    springFestival,
   };
 }
 
@@ -1967,6 +2010,10 @@ function generateWeekSchedule(input) {
     if (info.isPriority) {
       ctx.priorityDaysFound.push({ date: priorityDate, reason: info.reason, extraHeadcount: info.extraHeadcount });
     }
+  }
+  // 春節的出貨優先日規則還沒定案：先照連假 4 天以上處理（連假後 2 個上班日），另外提醒
+  if (weekDates.some((d) => isPriorityShippingDay(d, ctx.specialDates).springFestival)) {
+    ctx.warnings.push({ type: "info", date: input.weekStart, message: "春節後出貨優先日規則待確認（目前先照連假 4 天以上：連假後 2 個上班日都是出貨優先日）" });
   }
   if (ctx.priorityDaysFound.length > 0) {
     ctx.warnings.push({
