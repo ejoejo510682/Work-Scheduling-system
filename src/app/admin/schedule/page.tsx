@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { addDays, getDefaultWeekMonday, getMonday, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
 import { ecommerceCampaignLabel } from "@/lib/specialDates";
 // 票3 草稿提醒 UI 原型（只在 prototype/schedule-ui 分支）：有 ?variant=A|B|C 時改顯示原型，沒有就是原本的頁面
-import { PrototypeShell, VARIANTS, type VariantKey } from "./_prototype/PrototypeShell";
+import { PrototypeShell, type VariantKey } from "./_prototype/PrototypeShell";
 import { ADDED_AFTER_DRAFT, DRAFT_GENERATED_AT, FALLBACK_SPECIAL_DATES, FIXTURE_WEEK, initialManualRows } from "./_prototype/fixture";
 
 export default async function SchedulePage({
@@ -20,7 +20,8 @@ export default async function SchedulePage({
   const prevWeek = addDays(monday, -7);
   const nextWeek = addDays(monday, 7);
   const sunday = addDays(monday, 6);
-  const variant = VARIANTS.find((v) => v.key === params.variant)?.key as VariantKey | undefined;
+  // VARIANTS 來自 "use client" 檔，server 端拿到的是 client reference 不是陣列，所以這裡自己列
+  const variant = (["A", "B", "C"] as const).find((v) => v === params.variant) as VariantKey | undefined;
   const variantQuery = variant ? `&variant=${variant}` : "";
 
   const supabase = await createClient();
