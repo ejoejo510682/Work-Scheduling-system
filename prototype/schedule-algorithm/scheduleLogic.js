@@ -92,6 +92,8 @@ function ecommerceCampaignLabel(dateStr) {
 //   (c) special_dates 的「出貨優先日」：Cynthia 手動設定（例如臨時大量訂單）
 // 同一天符合好幾個理由也只加一次：有 special_dates 列設定 extra_headcount 就用那個值（好幾列取最大），
 // 沒有就是 +1。
+// 第十六次補充決議：無包裝出貨在「只因為是連假後第 2 個出貨優先日」的那天不加人（noPackExtra=false），
+// 撿貨、包裝、出箱貨照樣 +1；週一照 monday_headcount。
 // ----------------------------------------------------------------------------
 
 const SPRING_FESTIVAL_NAMES = ["春節", "農曆除夕", "小年夜"];
@@ -142,16 +144,21 @@ function campaignOn(dateStr, specialDates) {
  * 不上班日（週日、國定假日）nonWorking=true；週六、不上班日一律 isPriority=false。
  */
 function isPriorityShippingDay(dateStr, specialDates) {
-  const none = (nonWorking) => ({ isPriority: false, reason: null, extraHeadcount: 0, nonWorking, springFestival: false });
+  const none = (nonWorking) => ({ isPriority: false, reason: null, extraHeadcount: 0, nonWorking, springFestival: false, isFirstAfterRun: false, isSecondAfterRun: false, noPackExtra: false });
   if (!isWorkingDay(dateStr, specialDates)) return none(true);
   if (!isWorkingWeekday(dateStr, specialDates)) return none(false); // 一般週六照常上班，但不是出貨優先日
 
   const reasons = [];
   const rows = [];
   let springFestival = false;
+  // 第十六次補充決議：無包裝出貨只有「連假後第 2 個出貨優先日」不加人；其他理由（檔期、連假後第 1 天、手動）都加
+  let noPackExtra = false;
+  let isFirstAfterRun = false;
+  let isSecondAfterRun = false;
 
   const own = campaignOn(dateStr, specialDates);
   if (own) {
+    noPackExtra = true;
     reasons.push(own.label);
     if (own.row) rows.push(own.row);
   }
@@ -161,6 +168,7 @@ function isPriorityShippingDay(dateStr, specialDates) {
     if (isWorkingWeekday(d, specialDates)) break;
     const moved = campaignOn(d, specialDates);
     if (moved) {
+      noPackExtra = true;
       reasons.push(`${moved.label}（${d} 不是上班的平日，順延到這天）`);
       if (moved.row) rows.push(moved.row);
     }
@@ -173,17 +181,25 @@ function isPriorityShippingDay(dateStr, specialDates) {
     if (run.rows.some((r) => SPRING_FESTIVAL_NAMES.some((n) => (r.name || "").includes(n)))) springFestival = true;
   };
   const run1 = holidayRunEndingBefore(dateStr, specialDates);
-  if (run1) addRun(run1, 1);
+  if (run1) {
+    addRun(run1, 1);
+    isFirstAfterRun = true;
+    noPackExtra = true;
+  }
   // 連假 4 天以上 → 第 2 個上班平日也算：往回跳過一般週末，找到前一個上班平日，看它是不是某個 4 天以上連假後的第 1 天
   let prev = addDaysStr(dateStr, -1);
   while (getWeekdayIndex(prev) >= 5 && !isHolidayDate(prev, specialDates)) prev = addDaysStr(prev, -1);
   if (!run1 && isWorkingWeekday(prev, specialDates)) {
     const run0 = holidayRunEndingBefore(prev, specialDates);
-    if (run0 && run0.length >= 4) addRun(run0, 2);
+    if (run0 && run0.length >= 4) {
+      addRun(run0, 2);
+      isSecondAfterRun = true;
+    }
   }
 
   const manual = specialDates.find((s) => s.date === dateStr && s.type === "出貨優先日");
   if (manual) {
+    noPackExtra = true;
     reasons.push(`手動設定的出貨優先日：${manual.name}`);
     rows.push(manual);
   }
@@ -196,6 +212,9 @@ function isPriorityShippingDay(dateStr, specialDates) {
     extraHeadcount: setExtras.length > 0 ? Math.max(...setExtras) : 1,
     nonWorking: false,
     springFestival,
+    isFirstAfterRun,
+    isSecondAfterRun,
+    noPackExtra,
   };
 }
 
@@ -682,6 +701,8 @@ function baseTarget(position, ctx, isPriority, extraHeadcount, date, slot) {
       ? ctx.slotHeadcount.get(slotKeyHc)
       : ctx.headcountByPosition.get(position.id) || 0;
   let target = isPriority && position.priority_day_bonus ? base + extraHeadcount : base;
+  // 第十六次補充決議：連假後第 2 個出貨優先日（沒有其他理由時）無包裝出貨不加人，維持基準；週一照 monday_headcount
+  if (isPriority && position.name === "無包裝出貨" && date && !isPriorityShippingDay(date, ctx.specialDates).noPackExtra) target = base;
   // 硬性上限：不管基準人數、出貨優先日加人加到多少，target 本身就先鉏到上限，
   // 後面所有 fillPosition / flex 補人的流程都是照 target 填，天生就不會超過
   if (position.max_headcount != null) target = Math.min(target, position.max_headcount);
