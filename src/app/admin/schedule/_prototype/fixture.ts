@@ -101,11 +101,13 @@ export const TASK_TEMPLATES = [
   { position_id: "return", slot: "出貨完成後", weekdays: [0, 1, 2, 3, 4], pt_id: "s9", substitute_pt_id: "s8" },
 ];
 
-// 這週的本週任務：批發 2 人沒指定（會跳「請手動指定」），盤點指定連陳軒
+// 這週的本週任務：批發 2 人沒指定（會跳「請手動指定」）、盤點指定連陳軒（從處理進貨移過去）、
+// 週四下午批發指定王瀞玉（她那個時段在出貨，會跳「指定的人有衝突」）
 export function taskRequestsFor(monday: string, addDays: (d: string, n: number) => string) {
   return [
     { date: addDays(monday, 2), slot: "下午出訂單後", position_id: "wholesale", headcount: 2, pt_id: null },
     { date: addDays(monday, 3), slot: "出貨完成後", position_id: "stocktake", headcount: 1, pt_id: "s10" },
+    { date: addDays(monday, 3), slot: "下午出訂單後", position_id: "wholesale", headcount: 1, pt_id: "s7" },
   ];
 }
 
@@ -127,11 +129,15 @@ export function availabilityFor(days: string[]) {
 // Cynthia 已經手動調整過的格子（示範用）：
 //   週三上午出訂單後 許庭瑄 手動改去包裝（主要）
 //   週四上午出訂單後 王瀞玉 撿貨（照系統排的鎖住）＋ 處理進貨（手動加的備援）
+//   不符合規則的示範：週四下午出訂單後 葉翠茹 手動排去出箱貨（出箱貨限男性、她出箱貨一級）；
+//                     週四上午出訂單後 林清瑞 手動排去出箱貨（他週四請假）
 export function initialManualRows(monday: string, addDays: (d: string, n: number) => string): ManualRow[] {
   return [
     { date: addDays(monday, 2), slot: "上午出訂單後", position_id: "packing", pt_id: "s8", priority: 1, source: "manual", kind: "edited" },
     { date: addDays(monday, 3), slot: "上午出訂單後", position_id: "picking", pt_id: "s7", priority: 1, source: "manual", kind: "pinned" },
     { date: addDays(monday, 3), slot: "上午出訂單後", position_id: "inbound", pt_id: "s7", priority: 2, source: "manual", kind: "edited" },
+    { date: addDays(monday, 3), slot: "下午出訂單後", position_id: "boxship", pt_id: "s4", priority: 1, source: "manual", kind: "edited" },
+    { date: addDays(monday, 3), slot: "上午出訂單後", position_id: "boxship", pt_id: "s2", priority: 1, source: "manual", kind: "edited" },
   ];
 }
 

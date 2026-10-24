@@ -3,8 +3,9 @@ import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, getDefaultWeekMonday, getMonday, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
 import { ecommerceCampaignLabel } from "@/lib/specialDates";
-// 票3 草稿提醒 UI 原型（只在 prototype/schedule-ui 分支）：有 ?variant=A|B|C 時改顯示原型，沒有就是原本的頁面
-import { PrototypeShell, type VariantKey } from "./_prototype/PrototypeShell";
+// 票3 草稿提醒 UI 原型（只在 prototype/schedule-ui 分支）：有 ?variant=B1|B2|B3 時改顯示原型，沒有就是原本的頁面
+import { PrototypeShell } from "./_prototype/PrototypeShell";
+import { parseVariant } from "./_prototype/variants";
 import { ADDED_AFTER_DRAFT, DRAFT_GENERATED_AT, FALLBACK_SPECIAL_DATES, FIXTURE_WEEK, initialManualRows } from "./_prototype/fixture";
 
 export default async function SchedulePage({
@@ -21,7 +22,8 @@ export default async function SchedulePage({
   const nextWeek = addDays(monday, 7);
   const sunday = addDays(monday, 6);
   // VARIANTS 來自 "use client" 檔，server 端拿到的是 client reference 不是陣列，所以這裡自己列
-  const variant = (["A", "B", "C"] as const).find((v) => v === params.variant) as VariantKey | undefined;
+  // 版本清單放在沒有 "use client" 的 variants.ts，server 端才讀得到（"use client" 檔匯出的陣列在 server 端只是 client reference）
+  const variant = parseVariant(params.variant);
   const variantQuery = variant ? `&variant=${variant}` : "";
 
   const supabase = await createClient();

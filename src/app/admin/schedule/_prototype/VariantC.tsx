@@ -95,7 +95,7 @@ export function VariantC({ draft }: { draft: Draft }) {
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {draft.days.map((d) => (
-            <button key={d.date} type="button" onClick={() => { setPickDay(d.date); setOpen({ id: `day-${d.date}`, level: "參考", category: "整天", title: `${d.label} 整天班表`, date: d.date }); }} className="rounded border border-zinc-200 px-2 py-1 text-left text-xs hover:border-zinc-400 dark:border-zinc-700">
+            <button key={d.date} type="button" onClick={() => { setPickDay(d.date); setOpen({ id: `day-${d.date}`, catKey: "days", level: "參考", category: "整天", title: `${d.label} 整天班表`, date: d.date, targets: [{ date: d.date }] }); }} className="rounded border border-zinc-200 px-2 py-1 text-left text-xs hover:border-zinc-400 dark:border-zinc-700">
               <div className="font-medium">{d.label}</div>
               <DayMarks day={d} vertical />
             </button>

@@ -1,23 +1,18 @@
 "use client";
 
 // 票3「草稿提醒要長什麼樣子」UI 原型（throwaway prototype，分支 prototype/schedule-ui，不會合併進 main）：
-// 三個版本，掛在既有的週排班表頁 /admin/schedule?week=...&variant=A|B|C，用底部浮動列切換。
+// 掛在既有的週排班表頁 /admin/schedule?week=...&variant=B1|B2|B3，用底部浮動列切換。
+// 第 1 輪有 A（週總表）／B（逐日清單）／C（先看提醒）三個版面，Cynthia 選了 B；
+// 第 2 輪全部用 B 版面，切換的是三種人名格子的顯示方式（VariantA.tsx、VariantC.tsx 留在分支上，不再切換過去）。
 // 草稿是在瀏覽器裡跑 scheduleLogic.js（排班演算法原型）算出來的；所有按鈕只改記憶體狀態，不會存檔。
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useDraft, type DraftProps } from "./useDraft";
-import { VARIANT_A_NAME, VariantA } from "./VariantA";
-import { VARIANT_B_NAME, VariantB } from "./VariantB";
-import { VARIANT_C_NAME, VariantC } from "./VariantC";
+import { VariantB } from "./VariantB";
+import { VARIANTS, type VariantKey } from "./variants";
 
-export const VARIANTS = [
-  { key: "A", name: VARIANT_A_NAME },
-  { key: "B", name: VARIANT_B_NAME },
-  { key: "C", name: VARIANT_C_NAME },
-] as const;
-
-export type VariantKey = (typeof VARIANTS)[number]["key"];
+export type { VariantKey };
 
 export function PrototypeShell({ variant, ...props }: DraftProps & { variant: VariantKey }) {
   const draft = useDraft(props);
@@ -27,9 +22,7 @@ export function PrototypeShell({ variant, ...props }: DraftProps & { variant: Va
         原型（票3 草稿提醒）：草稿是瀏覽器裡用排班演算法原型＋假資料算出來的，按鈕都不會存檔。特殊日期來源：{props.specialDatesSource}。
         {props.snapshotSpecialDates.length !== props.currentSpecialDates.length && " 這份草稿故意用「颱風假、補假登記之前」的假日資料產生，示範「假日有變動，請重排」。"}
       </div>
-      {variant === "A" && <VariantA draft={draft} />}
-      {variant === "B" && <VariantB draft={draft} />}
-      {variant === "C" && <VariantC draft={draft} />}
+      <VariantB draft={draft} mode={variant} />
       <PrototypeSwitcher current={variant} week={props.monday} />
     </>
   );
@@ -59,13 +52,13 @@ function PrototypeSwitcher({ current, week }: { current: VariantKey; week: strin
   const v = VARIANTS[index];
   return (
     <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-fuchsia-700 px-2 py-1.5 text-sm text-white shadow-xl print:hidden">
-      <button type="button" onClick={() => go(-1)} className="rounded-full px-3 py-1 hover:bg-fuchsia-600" aria-label="上一個版本">
+      <button type="button" onClick={() => go(-1)} className="rounded-full px-3 py-1 hover:bg-fuchsia-600" aria-label="上一種顯示方式">
         ←
       </button>
-      <span className="min-w-36 text-center font-medium">
+      <span className="min-w-48 text-center font-medium">
         {v.key}（{v.name}）
       </span>
-      <button type="button" onClick={() => go(1)} className="rounded-full px-3 py-1 hover:bg-fuchsia-600" aria-label="下一個版本">
+      <button type="button" onClick={() => go(1)} className="rounded-full px-3 py-1 hover:bg-fuchsia-600" aria-label="下一種顯示方式">
         →
       </button>
     </div>

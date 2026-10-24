@@ -54,7 +54,7 @@ export function PersonChip({ row, draft, compact }: { row: ScheduleRow; draft: D
   );
 }
 
-function ChipMenu({ row, draft, onClose }: { row: ScheduleRow; draft: Draft; onClose: () => void }) {
+export function ChipMenu({ row, draft, onClose }: { row: ScheduleRow; draft: Draft; onClose: () => void }) {
   const [mode, setMode] = useState<"menu" | "move" | "backup">("menu");
   const isTask = !!row.task;
   const movable = ACTIVE_POSITIONS.filter((p) => p.id !== row.position_id && SLOT_MAP.some((m) => m.position_id === p.id && m.slot === row.slot));
