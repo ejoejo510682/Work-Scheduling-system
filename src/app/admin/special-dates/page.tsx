@@ -17,6 +17,7 @@ export default async function SpecialDatesPage() {
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
         國定假日、以及規律以外的自訂電商檔期（例如黑色星期五）放在這裡管理，排班時會提醒。
         每個月固定的雙字日／18號／25號檔期不用在這裡新增，系統會自動提醒。
+        國定假日（含補假）與颱風假／臨時停班整天不排班；臨時想加人的日子可以設成「出貨優先日」。
       </p>
       <SpecialDatesTable initialSpecialDates={specialDates ?? []} />
     </div>

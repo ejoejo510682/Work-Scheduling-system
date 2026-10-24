@@ -9,7 +9,7 @@ import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
 type Position = { id: string; name: string; sort_order: number };
 type SlotMapRow = { position_id: string; slot: string };
-type Headcount = { position_id: string; headcount: number };
+type Headcount = { position_id: string; slot: string | null; headcount: number };
 type Pt = { id: string; name: string; employment_type: EmploymentType };
 type Ability = { pt_id: string; position_id: string; level: number };
 type AvailabilityRow = { pt_id: string; range: string };
@@ -53,7 +53,8 @@ export function ScheduleDay({
     slotsByPosition.set(row.position_id, set);
   }
 
-  const headcountByPosition = new Map(headcounts.map((h) => [h.position_id, h.headcount]));
+  // 有綁時段的崗位每個時段各有一列；slot 為 null 的那列是彈性崗位的人數
+  const headcountByKey = new Map(headcounts.map((h) => [`${h.position_id}|${h.slot ?? ""}`, h.headcount]));
   const levelByKey = new Map(abilities.map((a) => [`${a.pt_id}:${a.position_id}`, a.level]));
   const availabilityByPt = new Map(availability.map((a) => [a.pt_id, a.range as AvailabilityRange]));
   const ptById = new Map(pt.map((p) => [p.id, p]));
@@ -288,7 +289,8 @@ export function ScheduleDay({
             </h2>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               {positionsInSlot.map((position) => {
-                const required = headcountByPosition.get(position.id) ?? 1;
+                const required =
+                  headcountByKey.get(`${position.id}|${slot}`) ?? headcountByKey.get(`${position.id}|`) ?? 1;
                 const assigned = initialAssignments.filter(
                   (a) => a.slot === slot && a.position_id === position.id,
                 );
@@ -389,7 +391,7 @@ export function ScheduleDay({
           </h2>
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {flexiblePositions.map((position) => {
-              const required = headcountByPosition.get(position.id) ?? 1;
+              const required = headcountByKey.get(`${position.id}|`) ?? 1;
               return (
                 <div key={position.id} className="space-y-3">
                   <div className="font-medium text-zinc-900 dark:text-zinc-50">{position.name}</div>

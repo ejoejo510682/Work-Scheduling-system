@@ -47,7 +47,7 @@ export const getCachedPositionSlotMap = unstable_cache(
 export const getCachedPositionHeadcount = unstable_cache(
   async () => {
     const supabase = createServiceRoleClient();
-    const { data } = await supabase.from("position_headcount").select("position_id, headcount");
+    const { data } = await supabase.from("position_headcount").select("position_id, slot, headcount");
     return data ?? [];
   },
   ["position-headcount"],

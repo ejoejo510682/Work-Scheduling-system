@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, getMonday, WEEKDAY_LABELS } from "@/lib/date";
 import { ecommerceCampaignLabel } from "@/lib/specialDates";
+import { CLOSED_SPECIAL_DATE_TYPES } from "@/lib/constants";
 import {
   getCachedActivePositions,
   getCachedPositionSlotMap,
@@ -88,9 +89,11 @@ export default async function ScheduleDayPage({
             <span
               key={sd.name}
               className={`rounded px-2 py-0.5 text-xs font-medium ${
-                sd.type === "國定假日"
+                CLOSED_SPECIAL_DATE_TYPES.includes(sd.type)
                   ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
-                  : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"
+                  : sd.type === "出貨優先日"
+                    ? "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300"
+                    : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"
               }`}
             >
               {sd.name}

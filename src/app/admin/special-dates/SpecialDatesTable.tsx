@@ -16,6 +16,8 @@ type SpecialDate = {
 const typeStyles: Record<SpecialDateType, string> = {
   國定假日: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400",
   電商檔期: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300",
+  出貨優先日: "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300",
+  "颱風假／臨時停班": "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-400",
 };
 
 export function SpecialDatesTable({ initialSpecialDates }: { initialSpecialDates: SpecialDate[] }) {
@@ -121,7 +123,7 @@ export function SpecialDatesTable({ initialSpecialDates }: { initialSpecialDates
 
         <div>
           <label className="mb-1 block text-sm text-zinc-700 dark:text-zinc-300">類型</label>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             {SPECIAL_DATE_TYPES.map((t) => (
               <label key={t} className="flex items-center gap-1 text-sm text-zinc-700 dark:text-zinc-300">
                 <input
@@ -141,7 +143,7 @@ export function SpecialDatesTable({ initialSpecialDates }: { initialSpecialDates
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="例如：中秋節、黑色星期五"
+            placeholder="例如：中秋節、黑色星期五、颱風假"
             className="w-full rounded border border-zinc-300 px-3 py-1.5 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
           />
         </div>
