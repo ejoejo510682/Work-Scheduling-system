@@ -57,7 +57,7 @@ export async function loadAutoScheduleInput(
       ? Promise.resolve({ data: [] })
       : supabase
           .from("daily_schedule")
-          .select("date, slot, position_id, pt_id, priority, source")
+          .select("id, date, slot, position_id, pt_id, priority, source")
           .gte("date", monday)
           .lte("date", sunday),
     supabase

@@ -421,7 +421,8 @@ function lookupStaffName(ctx, ptId) {
 // ----------------------------------------------------------------------------
 
 function applyLockedRows(ctx, input) {
-  const locked = (input.currentWeekSchedule || []).filter((r) => r.source === "manual");
+  // manual（手動改過）跟 locked（照系統排的鎖住）都保留，只有 auto 每次重算
+  const locked = (input.currentWeekSchedule || []).filter((r) => r.source !== "auto");
 
   for (const r of locked) {
     const position = ctx.allPositionById.get(r.position_id);
@@ -456,12 +457,16 @@ function applyLockedRows(ctx, input) {
   validateLockedRows(ctx, locked);
 }
 
-function validateLockedRows(ctx, locked) {
+// 自動排班時只檢查手動鎖定的格子；週排班表即時檢查（checkWeekSchedule）時檢查全部格子，訊息不提「手動鎖定」
+function validateLockedRows(ctx, locked, { prefix = "手動鎖定違反規則", suffix = "（已保留這個手動調整）" } = {}) {
   const flag = (r, why) =>
     ctx.warnings.push({
       type: "locked",
       date: r.date,
-      message: `手動鎖定違反規則：${lookupStaffName(ctx, r.pt_id)} ${r.date} ${r.slot}「${(ctx.allPositionById.get(r.position_id) || {}).name || r.position_id}」—${why}（已保留這個手動調整）`,
+      slot: r.slot,
+      positionId: r.position_id,
+      ptId: r.pt_id,
+      message: `${prefix}：${lookupStaffName(ctx, r.pt_id)} ${r.date} ${r.slot}「${(ctx.allPositionById.get(r.position_id) || {}).name || r.position_id}」—${why}${suffix}`,
     });
 
   for (const r of locked) {
@@ -489,7 +494,8 @@ function validateLockedRows(ctx, locked) {
       ctx.warnings.push({
         type: "locked",
         date: [...days].sort()[0],
-        message: `手動鎖定違反規則：PT ${staffRow.name} 本週被手動鎖定了 ${days.size} 天，超過本週 ${ptCap(ctx, staffRow)} 天上限（已保留這些手動調整）`,
+        ptId,
+        message: `${prefix}：PT ${staffRow.name} 本週排了 ${days.size} 天，超過本週 ${ptCap(ctx, staffRow)} 天上限${suffix}`,
       });
     }
   }
@@ -500,8 +506,8 @@ function validateLockedRows(ctx, locked) {
 //   - 備援崗位跟主要任務是同一個崗位
 //   - 能力二級，但這個崗位這個時段沒有三級的人
 // 預設的備援對應（撿貨 → 包裝）只管自動排班，手動可以選這個時段有開的任何崗位。
-function validateLockedBackupsAfterFill(ctx) {
-  for (const r of ctx.scheduleRows.filter((x) => x.source === "manual" && x.priority === 2)) {
+function validateLockedBackupsAfterFill(ctx, { allRows = false } = {}) {
+  for (const r of ctx.scheduleRows.filter((x) => (allRows || x.source === "manual") && x.priority === 2)) {
     const name = lookupStaffName(ctx, r.pt_id);
     const position = ctx.allPositionById.get(r.position_id);
     const posName = position ? position.name : r.position_id;
@@ -509,7 +515,10 @@ function validateLockedBackupsAfterFill(ctx) {
       ctx.warnings.push({
         type: "locked",
         date: r.date,
-        message: `手動鎖定的備援：${name} ${r.date} ${r.slot}「${posName}（備援）」—${why}（已保留這個手動調整）`,
+        slot: r.slot,
+        positionId: r.position_id,
+        ptId: r.pt_id,
+        message: `${allRows ? "不符合規則" : "手動鎖定的備援"}：${name} ${r.date} ${r.slot}「${posName}（備援）」—${why}${allRows ? "" : "（已保留這個手動調整）"}`,
       });
     const primary = ctx.scheduleRows.find((x) => x.date === r.date && x.slot === r.slot && x.pt_id === r.pt_id && x.priority === 1);
     if (!primary) flag("這個人這個時段沒有主要任務");
@@ -1616,25 +1625,26 @@ function assignSaturday(ctx, date, printerId) {
 // 的崗位全部滿額），才留下明確的警示，交給人工處理。
 // ----------------------------------------------------------------------------
 
-// 進貨組上午支援出貨時，上午出訂單前也寫同一個出貨崗位（跟週六一樣，整個半天寫同一個崗位），
-// 不要「進貨 → 出貨」換來換去。原本在處理進貨的那一格改掉，處理進貨因此不夠時照常提醒缺人
+// 這個人是不是「進貨組、這天上午出訂單後在支援出貨」
+function supportsShippingThisMorning(ctx, staffRow, date) {
+  if (!staffRow || staffRow.primary_group !== GROUP_INBOUND) return false;
+  return ctx.scheduleRows.some((r) => {
+    if (r.date !== date || r.slot !== INBOUND_SUPPORT_SLOT || r.pt_id !== staffRow.id || r.priority !== 1) return false;
+    const p = ctx.allPositionById.get(r.position_id);
+    return !!p && p.group === GROUP_SHIPPING;
+  });
+}
+
+// 進貨組上午支援出貨時，上午出訂單前不排（2026-10-25：那個時段沒有出貨崗位，也不要「進貨 → 出貨」換來換去），
+// 出訂單後才開始支援。原本排在處理進貨的那一格拿掉，處理進貨因此不夠時照常提醒缺人
 function alignInboundSupport(ctx, date) {
   const before = "上午出訂單前";
   const inbound = ctx.positions.find((p) => p.name === "處理進貨");
-  for (const s of ctx.activeStaff.filter((x) => x.primary_group === GROUP_INBOUND)) {
-    const support = ctx.scheduleRows.find(
-      (r) => r.date === date && r.slot === INBOUND_SUPPORT_SLOT && r.pt_id === s.id && r.priority === 1 && r.source === "auto"
-    );
-    const position = support && ctx.positionById.get(support.position_id);
-    if (!position || position.group !== GROUP_SHIPPING) continue;
+  for (const s of ctx.activeStaff.filter((x) => supportsShippingThisMorning(ctx, x, date))) {
     const current = ctx.scheduleRows.find((r) => r.date === date && r.slot === before && r.pt_id === s.id && r.priority === 1);
-    if (current && current.source !== "auto") continue;
-    if (current) {
-      current.position_id = position.id;
-      current.position_name = position.name;
-    } else if (isAvailableForSlotToday(s.id, date, before, ctx)) {
-      commitAssignment(ctx, date, before, position, s.id, 1);
-    }
+    if (!current || current.source !== "auto") continue;
+    ctx.scheduleRows.splice(ctx.scheduleRows.indexOf(current), 1);
+    ctx.assignedTodayBySlot.get(slotKey(date, before)).delete(s.id);
     if (!inbound) continue;
     const target = ctx.slotTargets.get(`${date}|${before}|${inbound.id}`) || 0;
     const filled = currentPriorityCount(ctx, date, before, inbound.id);
@@ -1746,6 +1756,7 @@ function fillIdleInbound(ctx, date) {
     if (!(ctx.slotsForPosition.get(inbound.id) || []).includes(slot)) continue;
     const candidates = ctx.activeStaff.filter((s) => {
       if (isShippingOnlyFullTime(s)) return false;
+      if (slot === "上午出訂單前" && supportsShippingThisMorning(ctx, s, date)) return false;
       if (!autoScheduleOk(s, date)) return false;
       if (s.employment_type === "PT" && !workingToday.has(s.id)) return false;
       if (s.employment_type !== "PT") {
@@ -2370,4 +2381,231 @@ function generateWeekSchedule(input) {
 // 十八、對外輸出
 // ----------------------------------------------------------------------------
 
-export { generateWeekSchedule, isPriorityShippingDay, getWeekDates, getWeekdayIndex };
+// ----------------------------------------------------------------------------
+// 十九、檢查目前的班表（GitHub issue #5：提醒即時計算、不存資料庫）
+//
+// 週排班表每次打開都用這個算提醒：不排人、不改任何格子，只照目前存的班表檢查缺人、不符合規則、
+// 任務、正職第三天、有空沒排到、沒登記可上班時間。提醒格式跟 generateWeekSchedule 一樣。
+// ----------------------------------------------------------------------------
+
+function checkSaturdayCrew(ctx, date) {
+  for (const name of ["印訂單", "撿貨", "包裝", "無包裝出貨"]) {
+    const p = ctx.positions.find((x) => x.name === name);
+    if (!p) continue;
+    const ownSlots = ctx.slotsForPosition.get(p.id) || [];
+    const covered = ctx.scheduleRows.some(
+      (r) => r.date === date && r.priority === 1 && r.position_id === p.id && ownSlots.includes(r.slot)
+    );
+    if (!covered) {
+      ctx.warnings.push({
+        type: "shortage",
+        date,
+        positionId: p.id,
+        message: `${date}（週六）必排崗位「${p.name}」沒有排到人（${ownSlots.join("／")}）`,
+      });
+    }
+  }
+  const crew = [...new Set(ctx.scheduleRows.filter((r) => r.date === date && r.priority === 1).map((r) => r.pt_id))]
+    .map((id) => ctx.activeStaff.find((s) => s.id === id))
+    .filter(Boolean);
+  const ftCount = crew.filter((s) => s.employment_type === "正職").length;
+  const ptCount = crew.filter((s) => s.employment_type === "PT").length;
+  if (ftCount < 1 || ptCount < 3) {
+    const parts = [];
+    if (ftCount < 1) parts.push("正職 0/1 位");
+    if (ptCount < 3) parts.push(`PT ${ptCount}/3 位`);
+    ctx.warnings.push({
+      type: "shortage",
+      date,
+      message: `${date}（週六）沒有湊滿 4 人（1 正職＋3 PT），目前 ${parts.join("、")}`,
+    });
+  }
+}
+
+function checkTasksForDay(ctx, date) {
+  for (const t of templatesOn(ctx, date)) {
+    const position = ctx.allPositionById.get(t.position_id);
+    const doing = (id) =>
+      ctx.scheduleRows.some((r) => r.date === date && r.slot === t.slot && r.pt_id === id && r.position_id === t.position_id);
+    if (doing(t.pt_id) || (t.substitute_pt_id && doing(t.substitute_pt_id))) continue;
+    // 負責人那個時段有別的主要工作（例如印單）：照規則不排他做、也不找代班
+    if (isAssignedThisSlot(ctx, date, t.slot, t.pt_id)) continue;
+    const person = ctx.activeStaff.find((s) => s.id === t.pt_id);
+    if (!person) continue;
+    const label = `${taskDayLabel(date)} ${t.slot}「${position.name}」`;
+    const sub = t.substitute_pt_id ? ctx.activeStaff.find((s) => s.id === t.substitute_pt_id) : null;
+    const message = registeredForSlot(ctx, t.pt_id, date, t.slot)
+      ? `${label}：固定任務的 ${person.name} 沒有排到，請手動安排`
+      : `${label}：${person.name} 請假／沒空，${sub ? `代班的 ${sub.name} 也沒有排到` : "沒有設定代班人員"}，這一格留空，請手動安排`;
+    ctx.warnings.push({ type: "task", date, slot: t.slot, positionId: position.id, message });
+  }
+
+  for (const req of ctx.taskRequests.filter((r) => r.date === date)) {
+    const position = ctx.allPositionById.get(req.position_id);
+    if (!position || position.is_active === false) continue;
+    const label = `${taskDayLabel(date)} ${req.slot}「${position.name}」`;
+    const placed = ctx.scheduleRows
+      .filter((r) => r.date === date && r.slot === req.slot && r.position_id === position.id && r.priority === 1)
+      .map((r) => r.pt_id);
+    for (const id of requestNamedIds(req)) {
+      if (placed.includes(id)) continue;
+      const name = lookupStaffName(ctx, id);
+      const current = ctx.scheduleRows.find((r) => r.date === date && r.slot === req.slot && r.pt_id === id && r.priority === 1);
+      if (current) {
+        const pos = ctx.allPositionById.get(current.position_id);
+        const what = pos && pos.group === GROUP_SHIPPING ? "出貨/印單" : `「${current.position_name}」`;
+        ctx.warnings.push({ type: "task", date, slot: req.slot, ptId: id, positionId: position.id, message: `${label}：指定的 ${name} 那個時段已排${what}，請手動調整` });
+      } else if (!registeredForSlot(ctx, id, date, req.slot)) {
+        ctx.warnings.push({ type: "task", date, slot: req.slot, ptId: id, positionId: position.id, message: `${label}：指定的 ${name} 請假、那個時段沒登記上班，這個位子留空，請手動調整` });
+      }
+    }
+    const missing = Math.max(0, (req.headcount || 1) - placed.length);
+    if (missing > 0) {
+      ctx.warnings.push({ type: "task_manual", date, slot: req.slot, positionId: position.id, message: `${label} 需要安排 ${missing} 人，請手動指定` });
+    }
+  }
+}
+
+function checkWeekSchedule(input) {
+  const ctx = buildContext(input);
+  const weekDates = getWeekDates(input.weekStart);
+
+  for (const r of input.currentWeekSchedule || []) {
+    const position = ctx.allPositionById.get(r.position_id);
+    const priority = r.priority || 1;
+    if (priority === 1 && isAssignedThisSlot(ctx, r.date, r.slot, r.pt_id)) {
+      ctx.warnings.push({
+        type: "locked",
+        date: r.date,
+        slot: r.slot,
+        ptId: r.pt_id,
+        message: `不符合規則：${lookupStaffName(ctx, r.pt_id)} ${r.date} ${r.slot} 同時排在兩個崗位（第一任務重複）`,
+      });
+    }
+    ctx.scheduleRows.push({
+      date: r.date,
+      slot: r.slot,
+      position_id: r.position_id,
+      position_name: position ? position.name : r.position_id,
+      pt_id: r.pt_id,
+      pt_name: lookupStaffName(ctx, r.pt_id),
+      priority,
+      source: r.source,
+    });
+    if (priority === 1) markAssignedThisSlot(ctx, r.date, r.slot, r.pt_id);
+    if (!ctx.lockedDaysByPt.has(r.pt_id)) ctx.lockedDaysByPt.set(r.pt_id, new Set());
+    ctx.lockedDaysByPt.get(r.pt_id).add(r.date);
+  }
+  for (const [ptId, days] of ctx.lockedDaysByPt) ctx.ptDaysUsedThisWeek.set(ptId, days.size);
+
+  validateLockedRows(ctx, ctx.scheduleRows, { prefix: "不符合規則", suffix: "" });
+  for (const r of ctx.scheduleRows.filter((x) => x.priority === 1)) {
+    if (getLevel(r.pt_id, r.position_id, ctx.abilities) !== 2) continue;
+    const withLevel3 = ctx.scheduleRows.some(
+      (x) => x.date === r.date && x.slot === r.slot && x.position_id === r.position_id && getLevel(x.pt_id, r.position_id, ctx.abilities) === 3
+    );
+    if (!withLevel3) {
+      ctx.warnings.push({
+        type: "locked",
+        date: r.date,
+        slot: r.slot,
+        positionId: r.position_id,
+        ptId: r.pt_id,
+        message: `不符合規則：${r.pt_name} ${r.date} ${r.slot}「${r.position_name}」—能力二級，這個崗位這個時段沒有三級的人陪同`,
+      });
+    }
+  }
+  validateLockedBackupsAfterFill(ctx, { allRows: true });
+  validateFullTimeDays(ctx, weekDates);
+
+  const idleByDate = {};
+  for (const date of weekDates) {
+    if (isSunday(date) || isHolidayDate(date, ctx.specialDates)) continue;
+    const working = (id) => ctx.scheduleRows.some((r) => r.date === date && r.pt_id === id && r.priority === 1);
+
+    if (isSaturday(date)) {
+      checkSaturdayCrew(ctx, date);
+    } else {
+      const info = isPriorityShippingDay(date, ctx.specialDates);
+      const weekday = getWeekdayIndex(date);
+      for (const slot of SLOTS) {
+        const inSlot = ctx.positions.filter((p) => (ctx.slotsForPosition.get(p.id) || []).includes(slot));
+        const targets = new Map();
+        for (const p of inSlot) targets.set(p.id, baseTarget(p, ctx, info.isPriority, info.extraHeadcount, date, slot));
+        // 處理進貨的人數規則跟 assignSlot 一樣：出訂單後不設人數；週一週二出訂單前合計 2 人
+        const inbound = inSlot.filter((p) => p.group === GROUP_INBOUND);
+        if (!NON_SHIPPING_SLOTS.includes(slot)) {
+          for (const p of inbound) targets.set(p.id, 0);
+        } else if (weekday <= 1) {
+          let remaining = 2;
+          for (const p of [...inbound].sort((a, b) => (a.name === "處理進貨" ? -1 : b.name === "處理進貨" ? 1 : 0))) {
+            const want = Math.min(remaining, normalHeadcount(ctx, p.id, slot));
+            targets.set(p.id, want);
+            remaining -= want;
+          }
+        }
+        for (const p of inSlot) {
+          const target = targets.get(p.id) || 0;
+          const filled = currentPriorityCount(ctx, date, slot, p.id);
+          if (filled < target) {
+            ctx.warnings.push({ type: "shortage", date, slot, positionId: p.id, target, message: `${date} ${slot} ${p.name}：需要 ${target} 人，只排到 ${filled} 人` });
+          }
+        }
+      }
+      for (const s of ctx.activeStaff) {
+        if (s.employment_type !== "正職" || !autoScheduleOk(s, date) || onLeave(ctx, s.id, date) || working(s.id)) continue;
+        if (!isUnderWeeklyCap(s.id, s, ctx, date) || hasTemplateWork(ctx, s, date)) continue;
+        ctx.warnings.push({ type: "shortage", date, ptId: s.id, message: `${date}：正職 ${s.name} 當天有上班，但沒有排任何工作（正職一定要上工）` });
+      }
+      checkTasksForDay(ctx, date);
+    }
+
+    // 有空沒排到的人、這天沒登記可上班時間的人
+    idleByDate[date] = [];
+    for (const s of ctx.activeStaff) {
+      if (!autoScheduleOk(s, date) || (isSaturday(date) && !canWorkSaturday(s))) continue;
+      const avail = getAvailability(s.id, date, ctx.availability);
+      if (!avail) ctx.warnings.push({ type: "missing_availability", date, ptId: s.id, message: `${s.name} 在 ${date} 沒有登記可上班時間` });
+      if (onLeave(ctx, s.id, date)) continue;
+      if (!working(s.id)) {
+        const atCap = !isUnderWeeklyCap(s.id, s, ctx, date);
+        idleByDate[date].push({ ptId: s.id, name: s.name, atCap });
+        if (!isSaturday(date) && s.employment_type === "PT" && !atCap) {
+          ctx.warnings.push({ type: "surplus", date, ptId: s.id, message: `${s.name} ${date} 有空，但整天沒有排到工作` });
+        }
+        continue;
+      }
+      if (isSaturday(date) || s.employment_type !== "PT") continue;
+      for (const slot of SLOTS) {
+        if (slot === "上午出訂單前" && supportsShippingThisMorning(ctx, s, date)) continue;
+        if (isAvailableForSlotToday(s.id, date, slot, ctx) && !isAssignedThisSlot(ctx, date, slot, s.id)) {
+          ctx.warnings.push({ type: "surplus", date, slot, ptId: s.id, message: `${s.name} ${date} ${slot} 沒有工作` });
+        }
+      }
+    }
+  }
+  warnUnplacedRequests(ctx, weekDates);
+
+  // 正職第三天：原本就沒有第三天、而且目前週二～週五沒有任何正職印單，才提醒
+  const before = ctx.warnings.length;
+  computePrinterRotation(input, ctx);
+  const rotationWarnings = ctx.warnings.splice(before);
+  const printer = ctx.positions.find((p) => p.name === "印訂單");
+  const fullTimePrintsMidweek = weekDates.slice(1, 5).some((d) =>
+    ctx.scheduleRows.some(
+      (r) =>
+        r.date === d &&
+        r.priority === 1 &&
+        printer &&
+        r.position_id === printer.id &&
+        (ctx.activeStaff.find((s) => s.id === r.pt_id) || {}).employment_type === "正職"
+    )
+  );
+  for (const w of rotationWarnings) if (w.type === "manual" && !fullTimePrintsMidweek) ctx.warnings.push(w);
+
+  const seen = new Set();
+  const warnings = ctx.warnings.filter((w) => !seen.has(w.message) && seen.add(w.message));
+  return { warnings, idleByDate };
+}
+
+export { generateWeekSchedule, checkWeekSchedule, isPriorityShippingDay, getWeekDates, getWeekdayIndex };

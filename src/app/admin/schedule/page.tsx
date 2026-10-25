@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
-import { addDays, getDefaultWeekMonday, getMonday, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
+import { addDays, getDefaultWeekMonday, getMonday } from "@/lib/date";
 import { ecommerceCampaignLabel } from "@/lib/specialDates";
-import { AutoScheduleButton } from "./AutoScheduleButton";
+import { loadAutoScheduleInput } from "@/lib/autoSchedule/loadInput";
+import { checkWeekSchedule } from "@/lib/autoSchedule/scheduleLogic";
+import { buildDayInfos, buildReminders, type CheckWarning, type RunNote, type SpecialDateRow } from "@/lib/autoSchedule/reminders";
+import { WeekBoard } from "./WeekBoard";
 
 export default async function SchedulePage({
   searchParams,
@@ -14,34 +17,58 @@ export default async function SchedulePage({
 
   const params = await searchParams;
   const monday = params.week ? getMonday(params.week) : getDefaultWeekMonday();
-  const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
   const prevWeek = addDays(monday, -7);
   const nextWeek = addDays(monday, 7);
-  const sunday = addDays(monday, 6);
 
   const supabase = await createClient();
-  const { data: specialDates } = await supabase
-    .from("special_dates")
-    .select("date, name")
-    .gte("date", monday)
-    .lte("date", sunday);
-  const holidayNamesByDate = new Map<string, string[]>();
-  for (const sd of specialDates ?? []) {
-    const list = holidayNamesByDate.get(sd.date) ?? [];
-    list.push(sd.name);
-    holidayNamesByDate.set(sd.date, list);
-  }
+  const [input, { data: run }] = await Promise.all([
+    loadAutoScheduleInput(supabase, monday),
+    supabase
+      .from("auto_schedule_runs")
+      .select("ran_at, trigger, status, error, special_dates, notes")
+      .eq("week_start", monday)
+      .maybeSingle(),
+  ]);
+
+  const rows = input.currentWeekSchedule as {
+    id: string;
+    date: string;
+    slot: string;
+    position_id: string;
+    pt_id: string;
+    priority: 1 | 2;
+    source: "auto" | "manual" | "locked";
+  }[];
+  const staffName = (id: string) => input.staff.find((s) => s.id === id)?.name ?? "（已停用）";
+  const positionName = (id: string) => input.positions.find((p) => p.id === id)?.name ?? "（已停用崗位）";
+  // 只有成功排過的那次才拿來比對假日有沒有變動
+  const snapshot = run?.status === "success" ? (run.special_dates as SpecialDateRow[]) : null;
+  const dayInfos = buildDayInfos(monday, input.specialDates, snapshot).map((d) => ({
+    ...d,
+    campaign: ecommerceCampaignLabel(d.date),
+  }));
+  // 這週還沒排班時不檢查，不然每一格都會顯示缺人
+  const check = rows.length > 0 ? checkWeekSchedule(input) : { warnings: [], idleByDate: {} };
+  const notes = run?.status === "success" ? (run.notes as RunNote[]) : [];
+  const reminders = buildReminders({
+    monday,
+    warnings: check.warnings as CheckWarning[],
+    notes,
+    dayInfos,
+    current: input.specialDates,
+    snapshot,
+    staffName,
+    positionName,
+  });
 
   return (
     <div>
       <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">週排班表</h1>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        選一天進去安排每個時段、每個崗位的人力；同一頁也能處理臨時請假的替補。按「自動排班」由系統依規則排整週，你自己排的格子會保留。
+        按「自動排班」由系統依規則排整週；你自己改過或鎖定的格子重排時會保留。點名字可以鎖定、改崗位、加備援，要新增人員請進單日頁。
       </p>
 
-      <AutoScheduleButton monday={monday} />
-
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <Link
           href={`/admin/schedule?week=${prevWeek}`}
           className="rounded border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
@@ -71,41 +98,23 @@ export default async function SchedulePage({
         </Link>
       </div>
 
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4 md:grid-cols-7">
-        {days.map((date, i) => {
-          const holidayNames = holidayNamesByDate.get(date) ?? [];
-          const campaignLabel = ecommerceCampaignLabel(date);
-          return (
-            <Link
-              key={date}
-              href={`/admin/schedule/${date}`}
-              className="rounded border border-zinc-200 bg-white p-4 text-center hover:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-600"
-            >
-              <div className="text-xs text-zinc-500 dark:text-zinc-400">週{WEEKDAY_LABELS[i]}</div>
-              <div className="mt-1 font-medium text-zinc-900 dark:text-zinc-50">
-                {formatDateLabel(date)}
-              </div>
-              {(holidayNames.length > 0 || campaignLabel) && (
-                <div className="mt-2 flex flex-col items-center gap-1">
-                  {holidayNames.map((name) => (
-                    <span
-                      key={name}
-                      className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-950 dark:text-red-400"
-                    >
-                      {name}
-                    </span>
-                  ))}
-                  {campaignLabel && (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-300">
-                      {campaignLabel}
-                    </span>
-                  )}
-                </div>
-              )}
-            </Link>
-          );
-        })}
-      </div>
+      <WeekBoard
+        key={monday}
+        monday={monday}
+        dayInfos={dayInfos}
+        rows={rows}
+        positions={input.positions
+          .filter((p) => p.is_active)
+          .map((p) => ({ id: p.id, name: p.name, group: p.work_group, isTask: p.included_in_auto_schedule === false }))}
+        slotMap={input.slotMap}
+        staff={input.staff
+          .filter((s) => s.is_active)
+          .map((s) => ({ id: s.id, name: s.name, employmentType: s.employment_type }))}
+        reminders={reminders}
+        idleByDate={check.idleByDate as Record<string, { ptId: string; name: string; atCap: boolean }[]>}
+        dayOffNotes={notes.filter((n) => n.type === "day_off").map((n) => ({ date: n.date ?? "", ptId: n.ptId ?? "" }))}
+        lastRun={run ? { ranAt: run.ran_at, trigger: run.trigger, status: run.status, error: run.error } : null}
+      />
     </div>
   );
 }
