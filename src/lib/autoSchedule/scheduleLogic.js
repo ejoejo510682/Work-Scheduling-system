@@ -485,11 +485,11 @@ function validateLockedRows(ctx, locked) {
 
   for (const [ptId, days] of ctx.lockedDaysByPt) {
     const staffRow = ctx.activeStaff.find((s) => s.id === ptId);
-    if (staffRow && staffRow.employment_type === "PT" && days.size > ctx.ptMaxDays) {
+    if (staffRow && staffRow.employment_type === "PT" && days.size > ptCap(ctx, staffRow)) {
       ctx.warnings.push({
         type: "locked",
         date: [...days].sort()[0],
-        message: `手動鎖定違反規則：PT ${staffRow.name} 本週被手動鎖定了 ${days.size} 天，超過本週 ${ctx.ptMaxDays} 天上限（已保留這些手動調整）`,
+        message: `手動鎖定違反規則：PT ${staffRow.name} 本週被手動鎖定了 ${days.size} 天，超過本週 ${ptCap(ctx, staffRow)} 天上限（已保留這些手動調整）`,
       });
     }
   }
@@ -555,6 +555,7 @@ function commitAssignment(ctx, date, slot, position, ptId, priority) {
 // 九、候選人排序
 //
 // 【開放判斷 #4】「三級崗位多」同分時怎麼排序？決定：
+//   0. 週六「多」組的 PT 在前（2026-10-25：多組優先排滿天數）
 //   1. 三級崗位數（在相關組別內）多的在前
 //   2. 這個月請假（登記全天休假）少的在前——配合度高的人多給一些天數（2026-10-25 補充決議）
 //   3. 本週目前已經被排的天數少的在前（讓工作量盡量平均分散，不要每次都同一批人被疊加）
@@ -564,7 +565,10 @@ function commitAssignment(ctx, date, slot, position, ptId, priority) {
 // ----------------------------------------------------------------------------
 
 function rankCandidates(candidateIds, ctx, groupPositionIds) {
+  const highGroup = (id) => (ctx.activeStaff.find((s) => s.id === id)?.saturday_group === "多" ? 0 : 1);
   return [...candidateIds].sort((a, b) => {
+    if (highGroup(a) !== highGroup(b)) return highGroup(a) - highGroup(b);
+
     const l3a = countLevel3(a, ctx.abilities, groupPositionIds);
     const l3b = countLevel3(b, ctx.abilities, groupPositionIds);
     if (l3a !== l3b) return l3b - l3a;
@@ -600,10 +604,15 @@ function ptMaxDaysFor(weekStart, specialDates) {
   return Math.max(1, PT_MAX_DAYS - closed);
 }
 
+// 週六「多」組的 PT（會的崗位多）不受連假週減少影響，最多都可以排 4 天（2026-10-25 補充決議）
+function ptCap(ctx, staffRow) {
+  return staffRow.saturday_group === "多" ? PT_MAX_DAYS : ctx.ptMaxDays;
+}
+
 function isUnderWeeklyCap(ptId, staffRow, ctx, date) {
   const lockedDays = ctx.lockedDaysByPt.get(ptId);
   if (date && lockedDays && lockedDays.has(date)) return true;
-  const cap = staffRow.employment_type === "PT" ? ctx.ptMaxDays : FULL_TIME_MAX_DAYS;
+  const cap = staffRow.employment_type === "PT" ? ptCap(ctx, staffRow) : FULL_TIME_MAX_DAYS;
   return (ctx.ptDaysUsedThisWeek.get(ptId) || 0) < cap;
 }
 
@@ -1806,7 +1815,7 @@ function markSurplus(ctx, date) {
       ctx.warnings.push({
         type: "info",
         date,
-        message: `${date}：${s.name} 當天可上班，但本週已達 PT ${ctx.ptMaxDays} 天上限，依規則不排班`,
+        message: `${date}：${s.name} 當天可上班，但本週已達 PT ${ptCap(ctx, s)} 天上限，依規則不排班`,
       });
       continue;
     }
@@ -1884,10 +1893,10 @@ function planPtDaysOff(ctx, weekdays, rotation) {
   const printingDays = (s) =>
     weekdays.filter((d) => rotation.assignments.get(d) === s.id && !onLeave(ctx, s.id, d) && !(ctx.lockedDaysByPt.get(s.id) || new Set()).has(d)).length;
   const needOff = (s) =>
-    flexibleDays(s).length - Math.max(0, ctx.ptMaxDays - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) - printingDays(s));
+    flexibleDays(s).length - Math.max(0, ptCap(ctx, s) - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) - printingDays(s));
   // 預計上班人數：有空的人，扣掉天數已經被固定的日子（印單、手動鎖定等）用完、這天其實來不了的 PT
   const remainingAfterFixed = (s) =>
-    ctx.ptMaxDays - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) - printingDays(s);
+    ptCap(ctx, s) - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) - printingDays(s);
   const expectedCount = (d) =>
     ctx.activeStaff.filter(
       (s) =>
@@ -1905,9 +1914,10 @@ function planPtDaysOff(ctx, weekdays, rotation) {
     const { d } = days[0];
     const s = waiting
       .filter((x) => flexibleDays(x).includes(d))
-      // 會的崗位少、這個月請假多的人先休，天數留給會的多、配合度高的人（2026-10-25 補充決議）
+      // 「多」組最後才休；會的崗位少、這個月請假多的人先休，天數留給會的多、配合度高的人（2026-10-25 補充決議）
       .sort(
         (a, b) =>
+          Number(b.saturday_group !== "多") - Number(a.saturday_group !== "多") ||
           countLevel3(a.id, ctx.abilities, ctx.shippingPositionIds) - countLevel3(b.id, ctx.abilities, ctx.shippingPositionIds) ||
           (ctx.monthLeave.get(b.id) || 0) - (ctx.monthLeave.get(a.id) || 0) ||
           needOff(b) - needOff(a) ||
@@ -1918,7 +1928,7 @@ function planPtDaysOff(ctx, weekdays, rotation) {
       type: "day_off",
       date: d,
       ptId: s.id,
-      message: `PT ${s.name} 本週能上的天數超過 ${ctx.ptMaxDays} 天上限，系統安排 ${d}（週${WEEKDAY_NAMES[getWeekdayIndex(d)]}）休假，讓每天人力平均，可以自己調整`,
+      message: `PT ${s.name} 本週能上的天數超過 ${ptCap(ctx, s)} 天上限，系統安排 ${d}（週${WEEKDAY_NAMES[getWeekdayIndex(d)]}）休假，讓每天人力平均，可以自己調整`,
     });
   }
 }
@@ -1991,7 +2001,7 @@ function planPreferredPositions(ctx, weekdays) {
         .filter((d) => coverableSlots(s, d).length > 0)
         .map((d) => ({ d, others: lowerRanked.filter((o) => coverableSlots(o, d).length > 0).length, free: booked(s, d) }))
         .sort((a, b) => (b.free ? 1 : 0) - (a.free ? 1 : 0) || a.others - b.others || (a.d < b.d ? -1 : 1));
-      let capacity = s.employment_type === "PT" ? ctx.ptMaxDays - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) : Infinity;
+      let capacity = s.employment_type === "PT" ? ptCap(ctx, s) - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) : Infinity;
       for (const { d, free } of days) {
         if (!free && capacity <= 0) continue;
         const toFill = coverableSlots(s, d);
@@ -2240,7 +2250,7 @@ function generateWeekSchedule(input) {
     ctx.warnings.push({
       type: "info",
       date: input.weekStart,
-      message: `本週有 ${PT_MAX_DAYS - ctx.ptMaxDays} 天放假，PT 每人最多排 ${ctx.ptMaxDays} 天`,
+      message: `本週有 ${PT_MAX_DAYS - ctx.ptMaxDays} 天放假，PT 每人最多排 ${ctx.ptMaxDays} 天（週六「多」組最多 ${PT_MAX_DAYS} 天）`,
     });
   }
   if (ctx.priorityDaysFound.length > 0) {
