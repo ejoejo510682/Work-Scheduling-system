@@ -2575,7 +2575,8 @@ function checkWeekSchedule(input) {
         }
         continue;
       }
-      if (isSaturday(date) || s.employment_type !== "PT") continue;
+      // 上班當天空著的時段：PT、正職都列（正職的非出貨時段照規則留給 Cynthia 手動安排，2026-10-25 決議放在參考提醒）
+      if (isSaturday(date)) continue;
       for (const slot of SLOTS) {
         if (slot === "上午出訂單前" && supportsShippingThisMorning(ctx, s, date)) continue;
         if (isAvailableForSlotToday(s.id, date, slot, ctx) && !isAssignedThisSlot(ctx, date, slot, s.id)) {
