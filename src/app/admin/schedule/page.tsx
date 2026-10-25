@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { addDays, getDefaultWeekMonday, getMonday, formatDateLabel, WEEKDAY_LABELS } from "@/lib/date";
 import { ecommerceCampaignLabel } from "@/lib/specialDates";
+import { AutoScheduleButton } from "./AutoScheduleButton";
 
 export default async function SchedulePage({
   searchParams,
@@ -35,8 +36,10 @@ export default async function SchedulePage({
     <div>
       <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">週排班表</h1>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-        選一天進去安排每個時段、每個崗位的人力；同一頁也能處理臨時請假的替補。
+        選一天進去安排每個時段、每個崗位的人力；同一頁也能處理臨時請假的替補。按「自動排班」由系統依規則排整週，你自己排的格子會保留。
       </p>
+
+      <AutoScheduleButton monday={monday} />
 
       <div className="mt-4 flex items-center gap-3">
         <Link
