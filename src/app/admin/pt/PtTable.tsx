@@ -25,6 +25,7 @@ type Pt = {
   saturday_group: SaturdayGroup | null;
   auto_schedule_weekdays: boolean;
   is_weekday_printer: boolean;
+  shipping_support_position_id: string | null;
 };
 
 type PtPatch = Partial<Omit<Pt, "id" | "name">>;
@@ -65,7 +66,13 @@ const typeSelectStyles: Record<EmploymentType, string> = {
 const selectClass =
   "rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50";
 
-export function PtTable({ initialPt }: { initialPt: Pt[] }) {
+export function PtTable({
+  initialPt,
+  shippingPositions,
+}: {
+  initialPt: Pt[];
+  shippingPositions: { id: string; name: string }[];
+}) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [employmentType, setEmploymentType] = useState<EmploymentType>("PT");
@@ -190,6 +197,7 @@ export function PtTable({ initialPt }: { initialPt: Pt[] }) {
               <th className="px-3 py-2">週六</th>
               <th className="px-3 py-2">平日自動排班</th>
               <th className="px-3 py-2">平日正職印單</th>
+              <th className="px-3 py-2">支援出貨只排</th>
               <th className="px-3 py-2">狀態</th>
             </tr>
           </thead>
@@ -325,6 +333,25 @@ export function PtTable({ initialPt }: { initialPt: Pt[] }) {
                     )}
                   </td>
                   <td className="px-3 py-2">
+                    {pt.primary_group === "進貨組" ? (
+                      <select
+                        value={pt.shipping_support_position_id ?? ""}
+                        disabled={busy}
+                        onChange={(e) => updatePt(pt, { shipping_support_position_id: e.target.value || null })}
+                        className={selectClass}
+                      >
+                        <option value="">不限</option>
+                        {shippingPositions.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-zinc-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
                     <button
                       onClick={() => toggleActive(pt)}
                       className={`rounded px-2 py-1 text-xs font-medium ${
@@ -346,7 +373,9 @@ export function PtTable({ initialPt }: { initialPt: Pt[] }) {
       <dl className="max-w-3xl space-y-1 rounded border border-zinc-200 p-4 text-xs text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
         <div>
           <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">主要組別：</dt>
-          <dd className="inline">自動排班先用同組的人；出貨組只有出貨優先日才找進貨組支援。</dd>
+          <dd className="inline">
+            自動排班先用同組的人；出貨組只有出貨優先日才找進貨組支援，進貨組以半天為單位，只支援上午的出貨。
+          </dd>
         </div>
         <div>
           <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">性別：</dt>
@@ -365,6 +394,10 @@ export function PtTable({ initialPt }: { initialPt: Pt[] }) {
         <div>
           <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">平日正職印單：</dt>
           <dd className="inline">週一和正職第三天由這位正職印訂單。</dd>
+        </div>
+        <div>
+          <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">支援出貨只排：</dt>
+          <dd className="inline">進貨組的人支援出貨時只排這個崗位（例如連陳軒只排撿貨），不限就照能力排。</dd>
         </div>
       </dl>
 

@@ -16,6 +16,7 @@ export async function loadAutoScheduleInput(
   { ignoreExisting = false }: { ignoreExisting?: boolean } = {},
 ) {
   const sunday = addDays(monday, 6);
+  const monthStart = `${monday.slice(0, 7)}-01`;
   const pastSaturdays = Array.from({ length: SATURDAY_LOOKBACK_WEEKS }, (_, i) => addDays(monday, -2 - 7 * i));
 
   const [
@@ -32,6 +33,7 @@ export async function loadAutoScheduleInput(
     { data: preferred },
     { data: templates },
     { data: requests },
+    { data: monthLeave },
   ] = await Promise.all([
     supabase
       .from("positions")
@@ -40,7 +42,7 @@ export async function loadAutoScheduleInput(
     supabase
       .from("pt_staff")
       .select(
-        "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer",
+        "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer, shipping_support_position_id",
       ),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
     supabase.from("position_headcount").select("position_id, slot, headcount, monday_headcount, priority_headcount"),
@@ -71,6 +73,13 @@ export async function loadAutoScheduleInput(
       .select("date, slot, position_id, headcount, task_request_staff(pt_id)")
       .gte("date", monday)
       .lte("date", sunday),
+    // 這週一所在月份的全天休假（挑人時請假少的優先）
+    supabase
+      .from("pt_daily_availability")
+      .select("pt_id")
+      .eq("range", "全天休假")
+      .gte("date", monthStart)
+      .lte("date", addDays(addDays(monthStart, 31).slice(0, 7) + "-01", -1)),
   ]);
 
   if (positionsError) throw new Error(`讀取崗位失敗：${positionsError.message}`);
@@ -105,5 +114,9 @@ export async function loadAutoScheduleInput(
       pt_ids: (r.task_request_staff as { pt_id: string }[]).map((s) => s.pt_id),
     })),
     weekdayFtPrinterId: printer?.id ?? null,
+    monthLeaveCounts: (monthLeave ?? []).reduce<Record<string, number>>((counts, r) => {
+      counts[r.pt_id] = (counts[r.pt_id] ?? 0) + 1;
+      return counts;
+    }, {}),
   };
 }
