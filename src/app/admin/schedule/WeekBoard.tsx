@@ -81,6 +81,7 @@ export function WeekBoard({
   idleByDate,
   dayOffNotes,
   lastRun,
+  cronMissed,
 }: {
   monday: string;
   dayInfos: DayInfo[];
@@ -92,6 +93,7 @@ export function WeekBoard({
   idleByDate: Record<string, Idle[]>;
   dayOffNotes: { date: string; ptId: string }[];
   lastRun: LastRun;
+  cronMissed: boolean;
 }) {
   const router = useRouter();
   const [selectedCat, setSelectedCat] = useState<CategoryKey | null>(null);
@@ -445,6 +447,11 @@ export function WeekBoard({
       <aside className="space-y-3 self-start lg:sticky lg:top-4">
         <div className="space-y-2 rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="font-bold text-zinc-900 dark:text-zinc-50">草稿提醒</h2>
+          {cronMissed && lastRun?.status !== "failed" && (
+            <p className="rounded bg-red-50 px-2 py-1.5 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+              這週五早上的自動排班沒有執行，請按下面的按鈕自己排一次。
+            </p>
+          )}
           {lastRun?.status === "failed" && (
             <p className="rounded bg-red-50 px-2 py-1.5 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
               {fmtTime(lastRun.ranAt)} 的{lastRun.trigger === "cron" ? "每週五自動排班" : "自動排班"}失敗：{lastRun.error}

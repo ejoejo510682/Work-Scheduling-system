@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
-import { addDays, getDefaultWeekMonday, getMonday } from "@/lib/date";
+import { addDays, getDefaultWeekMonday, getMonday, todayInTaipei } from "@/lib/date";
 import { ecommerceCampaignLabel } from "@/lib/specialDates";
 import { loadAutoScheduleInput } from "@/lib/autoSchedule/loadInput";
 import { checkWeekSchedule } from "@/lib/autoSchedule/scheduleLogic";
@@ -50,6 +50,14 @@ export default async function SchedulePage({
   // 這週還沒排班時不檢查，不然每一格都會顯示缺人
   const check = rows.length > 0 ? checkWeekSchedule(input) : { warnings: [], idleByDate: {} };
   const notes = run?.status === "success" ? (run.notes as RunNote[]) : [];
+  // 每週五早上 8 點多會自動排下週（vercel.json）。還沒到的週、已經過了週五 10 點卻沒有任何排班紀錄，就提醒沒有執行
+  const friday = addDays(monday, -3);
+  const today = todayInTaipei();
+  const hourInTaipei = Number(new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Taipei", hour: "numeric", hour12: false }).format(new Date()));
+  const cronMissed =
+    monday > today &&
+    (today > friday || (today === friday && hourInTaipei >= 10)) &&
+    !(run && new Date(run.ran_at) >= new Date(`${friday}T00:00:00+08:00`));
   const reminders = buildReminders({
     monday,
     warnings: check.warnings as CheckWarning[],
@@ -114,6 +122,7 @@ export default async function SchedulePage({
         idleByDate={check.idleByDate as Record<string, { ptId: string; name: string; atCap: boolean }[]>}
         dayOffNotes={notes.filter((n) => n.type === "day_off").map((n) => ({ date: n.date ?? "", ptId: n.ptId ?? "" }))}
         lastRun={run ? { ranAt: run.ran_at, trigger: run.trigger, status: run.status, error: run.error } : null}
+        cronMissed={cronMissed}
       />
     </div>
   );
