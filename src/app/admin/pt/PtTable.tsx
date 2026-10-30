@@ -26,6 +26,7 @@ type Pt = {
   auto_schedule_weekdays: boolean;
   is_weekday_printer: boolean;
   shipping_support_position_id: string | null;
+  skip_priority_shipping_support: boolean;
 };
 
 type PtPatch = Partial<Omit<Pt, "id" | "name">>;
@@ -197,6 +198,7 @@ export function PtTable({
               <th className="px-3 py-2">週六</th>
               <th className="px-3 py-2">平日自動排班</th>
               <th className="px-3 py-2">平日正職印單</th>
+              <th className="px-3 py-2">出貨優先日不支援出貨</th>
               <th className="px-3 py-2">支援出貨只排</th>
               <th className="px-3 py-2">狀態</th>
             </tr>
@@ -334,9 +336,22 @@ export function PtTable({
                   </td>
                   <td className="px-3 py-2">
                     {pt.primary_group === "進貨組" ? (
+                      <input
+                        type="checkbox"
+                        checked={pt.skip_priority_shipping_support}
+                        disabled={busy}
+                        onChange={() => updatePt(pt, { skip_priority_shipping_support: !pt.skip_priority_shipping_support })}
+                        aria-label={`${pt.name}出貨優先日不支援出貨`}
+                      />
+                    ) : (
+                      <span className="text-zinc-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {pt.primary_group === "進貨組" ? (
                       <select
                         value={pt.shipping_support_position_id ?? ""}
-                        disabled={busy}
+                        disabled={busy || pt.skip_priority_shipping_support}
                         onChange={(e) => updatePt(pt, { shipping_support_position_id: e.target.value || null })}
                         className={selectClass}
                       >
@@ -394,6 +409,10 @@ export function PtTable({
         <div>
           <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">平日正職印單：</dt>
           <dd className="inline">週一和正職第三天由這位正職印訂單。</dd>
+        </div>
+        <div>
+          <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">出貨優先日不支援出貨：</dt>
+          <dd className="inline">進貨組的人勾了以後，出貨優先日不會被排去支援出貨，整天做進貨（週六不受影響）。</dd>
         </div>
         <div>
           <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">支援出貨只排：</dt>

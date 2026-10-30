@@ -1099,8 +1099,10 @@ const NON_SHIPPING_SLOTS = ["上午出訂單前", "下午出訂單前", "出貨�
 // 下午三個時段（含出貨完成後）都做進貨
 const INBOUND_SUPPORT_SLOT = "上午出訂單後";
 
+// 平日進貨組支援出貨：只在上午出訂單後，而且人員沒有勾「出貨優先日不支援出貨」（2026-10-31）
 function inboundSupportSlotOk(staffRow, position, slot) {
-  return !staffRow || staffRow.primary_group !== GROUP_INBOUND || position.group !== GROUP_SHIPPING || slot === INBOUND_SUPPORT_SLOT;
+  if (!staffRow || staffRow.primary_group !== GROUP_INBOUND || position.group !== GROUP_SHIPPING) return true;
+  return slot === INBOUND_SUPPORT_SLOT && !staffRow.skip_priority_shipping_support;
 }
 
 // 第九次補充決議：出貨組正職只自動排「出貨工作」（出訂單後的出貨崗位＋印訂單）；處理進貨、
@@ -1279,9 +1281,10 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
   // 才會進到這個候選池，所以等於「出貨組的人用完了，才輪到進貨組支援」。
   const shippingInboundCandidates = isPriority && slot === INBOUND_SUPPORT_SLOT
     ? new Set(
-        buildEligiblePool(shippingPositions.map((p) => p.id), date, slot, ctx, null).filter(
-          (id) => ctx.activeStaff.find((s) => s.id === id).primary_group === GROUP_INBOUND
-        )
+        buildEligiblePool(shippingPositions.map((p) => p.id), date, slot, ctx, null).filter((id) => {
+          const s = ctx.activeStaff.find((x) => x.id === id);
+          return s.primary_group === GROUP_INBOUND && !s.skip_priority_shipping_support;
+        })
       )
     : new Set();
   // step3：進貨仍缺 → 排不進出貨崗位的出貨組 PT（第九次補充決議：出貨組正職不自動排處理進貨）。
@@ -1623,37 +1626,47 @@ function assignSaturday(ctx, date, printerId) {
 // ----------------------------------------------------------------------------
 
 // 這個人是不是「進貨組、這天上午出訂單後在支援出貨」
-function supportsShippingThisMorning(ctx, staffRow, date) {
-  if (!staffRow || staffRow.primary_group !== GROUP_INBOUND) return false;
+function shipsInSlot(ctx, staffRow, date, slot) {
   return ctx.scheduleRows.some((r) => {
-    if (r.date !== date || r.slot !== INBOUND_SUPPORT_SLOT || r.pt_id !== staffRow.id || r.priority !== 1) return false;
+    if (r.date !== date || r.slot !== slot || r.pt_id !== staffRow.id || r.priority !== 1) return false;
     const p = ctx.allPositionById.get(r.position_id);
     return !!p && p.group === GROUP_SHIPPING;
   });
 }
 
-// 進貨組上午支援出貨時，上午出訂單前不排（2026-10-25：那個時段沒有出貨崗位，也不要「進貨 → 出貨」換來換去），
-// 出訂單後才開始支援。原本排在處理進貨的那一格拿掉，處理進貨因此不夠時照常提醒缺人
+// 進貨組支援出貨時要留空、不排進貨的時段（避免「進貨 → 出貨」來回跑），這種空格不算漏排：
+//   - 上午出訂單後在出貨 → 上午出訂單前留空（2026-10-25：那個時段也沒有出貨崗位）
+//   - Cynthia 指定他上午、下午出訂單後都出貨 → 下午出訂單前也留空（2026-10-31）；出貨完成後照常回去進貨
+function inboundSupportGap(ctx, staffRow, date, slot) {
+  if (!staffRow || staffRow.primary_group !== GROUP_INBOUND) return false;
+  if (slot === "上午出訂單前") return shipsInSlot(ctx, staffRow, date, "上午出訂單後");
+  if (slot === "下午出訂單前") return shipsInSlot(ctx, staffRow, date, "上午出訂單後") && shipsInSlot(ctx, staffRow, date, "下午出訂單後");
+  return false;
+}
+
+// 進貨組支援出貨時，留空的時段（inboundSupportGap）原本排在處理進貨的那一格拿掉，處理進貨因此不夠時照常提醒缺人
 function alignInboundSupport(ctx, date) {
-  const before = "上午出訂單前";
   const inbound = ctx.positions.find((p) => p.name === "處理進貨");
-  for (const s of ctx.activeStaff.filter((x) => supportsShippingThisMorning(ctx, x, date))) {
-    const current = ctx.scheduleRows.find((r) => r.date === date && r.slot === before && r.pt_id === s.id && r.priority === 1);
-    if (!current || current.source !== "auto") continue;
-    ctx.scheduleRows.splice(ctx.scheduleRows.indexOf(current), 1);
-    ctx.assignedTodayBySlot.get(slotKey(date, before)).delete(s.id);
-    if (!inbound) continue;
-    const target = ctx.slotTargets.get(`${date}|${before}|${inbound.id}`) || 0;
-    const filled = currentPriorityCount(ctx, date, before, inbound.id);
-    if (filled < target && !ctx.warnings.some((w) => w.type === "shortage" && w.date === date && w.slot === before && w.positionId === inbound.id)) {
-      ctx.warnings.push({
-        type: "shortage",
-        date,
-        message: `${date} ${before} ${inbound.name}：需要 ${target} 人，只排到 ${filled} 人`,
-        slot: before,
-        positionId: inbound.id,
-        target,
-      });
+  for (const s of ctx.activeStaff) {
+    for (const before of ["上午出訂單前", "下午出訂單前"]) {
+      if (!inboundSupportGap(ctx, s, date, before)) continue;
+      const current = ctx.scheduleRows.find((r) => r.date === date && r.slot === before && r.pt_id === s.id && r.priority === 1);
+      if (!current || current.source !== "auto") continue;
+      ctx.scheduleRows.splice(ctx.scheduleRows.indexOf(current), 1);
+      ctx.assignedTodayBySlot.get(slotKey(date, before)).delete(s.id);
+      if (!inbound) continue;
+      const target = ctx.slotTargets.get(`${date}|${before}|${inbound.id}`) || 0;
+      const filled = currentPriorityCount(ctx, date, before, inbound.id);
+      if (filled < target && !ctx.warnings.some((w) => w.type === "shortage" && w.date === date && w.slot === before && w.positionId === inbound.id)) {
+        ctx.warnings.push({
+          type: "shortage",
+          date,
+          message: `${date} ${before} ${inbound.name}：需要 ${target} 人，只排到 ${filled} 人`,
+          slot: before,
+          positionId: inbound.id,
+          target,
+        });
+      }
     }
   }
 }
@@ -1753,9 +1766,13 @@ function fillIdleInbound(ctx, date) {
     if (!(ctx.slotsForPosition.get(inbound.id) || []).includes(slot)) continue;
     const candidates = ctx.activeStaff.filter((s) => {
       if (isShippingOnlyFullTime(s)) return false;
-      if (slot === "上午出訂單前" && supportsShippingThisMorning(ctx, s, date)) return false;
+      if (inboundSupportGap(ctx, s, date, slot)) return false;
       if (!autoScheduleOk(s, date)) return false;
-      if (s.employment_type === "PT" && !workingToday.has(s.id)) return false;
+      // 出貨組 PT 只補當天本來就有上班的人（不為進貨多叫人）；進貨組的 PT 進貨是本業，有空、天數還沒滿就排
+      if (s.employment_type === "PT" && !workingToday.has(s.id)) {
+        if (s.primary_group !== GROUP_INBOUND || !isUnderWeeklyCap(s.id, s, ctx, date)) return false;
+        if (!isAvailableForSlotToday(s.id, date, slot, ctx)) return false;
+      }
       if (s.employment_type !== "PT") {
         const a = getAvailability(s.id, date, ctx.availability);
         if (a && a.range === "全天休假") return false;
@@ -2575,7 +2592,7 @@ function checkWeekSchedule(input) {
       // 上班當天空著的時段：PT、正職都列（正職的非出貨時段照規則留給 Cynthia 手動安排，2026-10-25 決議放在參考提醒）
       if (isSaturday(date)) continue;
       for (const slot of SLOTS) {
-        if (slot === "上午出訂單前" && supportsShippingThisMorning(ctx, s, date)) continue;
+        if (inboundSupportGap(ctx, s, date, slot)) continue;
         if (isAvailableForSlotToday(s.id, date, slot, ctx) && !isAssignedThisSlot(ctx, date, slot, s.id)) {
           ctx.warnings.push({ type: "surplus", date, slot, ptId: s.id, message: `${s.name} ${date} ${slot} 沒有工作` });
         }

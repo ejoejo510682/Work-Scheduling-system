@@ -10,7 +10,7 @@ export default async function PtPage() {
     supabase
       .from("pt_staff")
       .select(
-        "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer, shipping_support_position_id",
+        "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer, shipping_support_position_id, skip_priority_shipping_support",
       )
       .order("name"),
     supabase

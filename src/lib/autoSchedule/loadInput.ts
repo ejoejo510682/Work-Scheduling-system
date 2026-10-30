@@ -42,7 +42,7 @@ export async function loadAutoScheduleInput(
     supabase
       .from("pt_staff")
       .select(
-        "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer, shipping_support_position_id",
+        "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer, shipping_support_position_id, skip_priority_shipping_support",
       ),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
     supabase.from("position_headcount").select("position_id, slot, headcount, monday_headcount, priority_headcount"),
