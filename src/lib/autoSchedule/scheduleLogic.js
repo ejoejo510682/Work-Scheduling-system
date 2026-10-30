@@ -1358,12 +1358,9 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
 // ----------------------------------------------------------------------------
 // 十五、週六特別處理（票2 決議第八條）
 //
-// 【開放判斷 #1】daily_schedule.slot 要填什麼？決定：套用現有 4 個平日時段
-// （上午出訂單前／上午出訂單後／下午出訂單前／下午出訂單後），不使用「出貨完成後」，
-// 讓同一批人整天都掛在同樣的崗位上，等於用「同一個人、同一個崗位、連續 4 個既有
-// 時段」來表達「一個區塊做到完」，不需要改資料庫 schema 多加一個列舉值。
-// 缺點：UI 上看起來像是週六也分了 4 段，其實是同一段，Cynthia 如果覺得這樣
-// 誤導，之後可以考慮幫 daily_schedule.slot 加一個專屬的「週六整天」選項。
+// daily_schedule.slot 怎麼填：用平日的時段，不使用「出貨完成後」。出訂單前只有正職印單；
+// 正職跟 3 位 PT 的出貨崗位寫在上午、下午出訂單後（2026-10-30 改：原本 PT 整天四個時段都寫同一個崗位，
+// 出訂單前會出現不存在的包裝、撿貨，Cynthia 決定出訂單前不排）。
 // ----------------------------------------------------------------------------
 
 const SATURDAY_SLOTS = ["上午出訂單前", "上午出訂單後", "下午出訂單前", "下午出訂單後"];
@@ -1562,7 +1559,7 @@ function assignSaturday(ctx, date, printerId) {
   }
   for (const m of crewMembers) {
     if (!roleOf.has(m.id)) roleOf.set(m.id, saturdayPtPositions.find((p) => canDo(m, p)) || pickingPosition);
-    for (const slot of SATURDAY_SLOTS) commitIfFree(slot, roleOf.get(m.id), m.id);
+    for (const slot of ["上午出訂單後", "下午出訂單後"]) commitIfFree(slot, roleOf.get(m.id), m.id);
   }
 
   for (const p of [printerPosition, pickingPosition, packingPosition, noPackagePosition]) {
