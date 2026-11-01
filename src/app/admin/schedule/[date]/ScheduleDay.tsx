@@ -87,6 +87,17 @@ export function ScheduleDay({
     const { error } = await supabase
       .from("daily_schedule")
       .insert({ date, slot, position_id: positionId, pt_id: ptId, priority });
+    if (!error && priority === 2) {
+      // 備援是做完第一任務才去支援：第一任務一起鎖定，重排整週時才不會被移到跟備援同一個崗位
+      await supabase
+        .from("daily_schedule")
+        .update({ source: "locked" })
+        .eq("date", date)
+        .eq("slot", slot)
+        .eq("pt_id", ptId)
+        .eq("priority", 1)
+        .eq("source", "auto");
+    }
     setBusy(false);
     if (error) {
       alert(error.code === "23505" ? "這個人這個時段已經被排過了" : error.message);

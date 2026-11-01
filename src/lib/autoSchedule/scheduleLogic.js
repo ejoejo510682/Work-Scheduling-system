@@ -534,6 +534,13 @@ function validateLockedBackupsAfterFill(ctx, { allRows = false } = {}) {
   }
 }
 
+// 這個人這個時段已經鎖定當這個崗位的備援：第一任務不能再排同一個崗位（2026-11-01 修正：重排後同崗位又是第一任務又是備援）
+function hasBackupHere(ctx, date, slot, ptId, positionId) {
+  return ctx.scheduleRows.some(
+    (r) => r.date === date && r.slot === slot && r.pt_id === ptId && r.position_id === positionId && r.priority === 2
+  );
+}
+
 function commitAssignment(ctx, date, slot, position, ptId, priority) {
   const staffRow = ctx.activeStaff.find((s) => s.id === ptId);
   ctx.scheduleRows.push({
@@ -682,7 +689,10 @@ function fillPosition(ctx, date, slot, position, target, candidatePool, groupPos
 
   // 性別限制：不符合的人直接不列入這個崗位的候選
   const remainingPool = candidatePool.filter(
-    (id) => !isAssignedThisSlot(ctx, date, slot, id) && positionAllowedById(ctx, id, position)
+    (id) =>
+      !isAssignedThisSlot(ctx, date, slot, id) &&
+      positionAllowedById(ctx, id, position) &&
+      !hasBackupHere(ctx, date, slot, id, position.id)
   );
   // 第十次補充決議：這個崗位有設優先人選的話，候選池裡的優先人選照 rank 排在最前面，
   // 其他人再照一般挑人順序（能力、性別、可上班、4 天上限等條件，候選池跟下面的能力檢查已經處理）
@@ -1417,7 +1427,9 @@ function assignSaturday(ctx, date, printerId) {
     if (isAssignedThisSlot(ctx, date, slot, ptId)) return;
     // 「包裝」硬性上限 4 人，週六也不能破例——這個時段若包裝已經滿了（或性別不符），改排撿貨保底
     const staffRow = ctx.activeStaff.find((s) => s.id === ptId);
-    const pos = [position, pickingPosition].find((p) => positionAllowed(staffRow, p) && hasCapacity(ctx, date, slot, p));
+    const pos = [position, pickingPosition].find(
+      (p) => positionAllowed(staffRow, p) && hasCapacity(ctx, date, slot, p) && !hasBackupHere(ctx, date, slot, ptId, p.id)
+    );
     if (pos) commitAssignment(ctx, date, slot, pos, ptId, 1);
   }
   const staffById = (id) => ctx.activeStaff.find((s) => s.id === id);
@@ -1698,6 +1710,7 @@ function ensureFullTimeWorked(ctx, date, slots, skipPositionIds, isPriority) {
           getLevel(s.id, p.id, ctx.abilities) >= 2 &&
           positionAllowed(s, p) &&
           hasCapacity(ctx, date, slot, p) &&
+          !hasBackupHere(ctx, date, slot, s.id, p.id) &&
           // 第九次補充決議：出貨組正職只用出貨工作（出貨崗位、印訂單）來滿足「一定要上工」
           !(isShippingOnlyFullTime(s) && p.group !== GROUP_SHIPPING) &&
           // 挑人順序 step2：進貨組的人只有出貨優先日才能排出貨崗位，保底檢查也不例外
@@ -1777,7 +1790,7 @@ function fillIdleInbound(ctx, date) {
         const a = getAvailability(s.id, date, ctx.availability);
         if (a && a.range === "全天休假") return false;
       }
-      if (isAssignedThisSlot(ctx, date, slot, s.id)) return false;
+      if (isAssignedThisSlot(ctx, date, slot, s.id) || hasBackupHere(ctx, date, slot, s.id, inbound.id)) return false;
       if (!positionAllowed(s, inbound)) return false;
       const avail = getAvailability(s.id, date, ctx.availability);
       if (avail && !isAvailableForSlot(avail.range, slot)) return false;
@@ -2014,6 +2027,7 @@ function planPreferredPositions(ctx, weekdays) {
         (sl) =>
           need.get(`${d}|${sl}`) > 0 &&
           inboundSupportSlotOk(s, position, sl) &&
+          !hasBackupHere(ctx, d, sl, s.id, positionId) &&
           isAvailableForSlotToday(s.id, d, sl, ctx) &&
           !isAssignedThisSlot(ctx, d, sl, s.id)
       );
@@ -2324,7 +2338,7 @@ function generateWeekSchedule(input) {
         // 這個時段的印訂單已經被手動鎖定（不管鎖的是誰）就不重複排
         if (currentPriorityCount(ctx, date, slot, printerPosition.id) > 0) {
           printerHandledSlots.add(slot);
-        } else if (printerId && !isAssignedThisSlot(ctx, date, slot, printerId)) {
+        } else if (printerId && !isAssignedThisSlot(ctx, date, slot, printerId) && !hasBackupHere(ctx, date, slot, printerId, printerPosition.id)) {
           commitAssignment(ctx, date, slot, printerPosition, printerId, 1);
           printerHandledSlots.add(slot);
         }

@@ -225,19 +225,29 @@ export function WeekBoard({
                 className={button}
                 onClick={() =>
                   menu.mode === "move"
-                    ? act((s) => s.from("daily_schedule").update({ position_id: p.id, source: "manual" }).eq("id", row.id))
-                    : backup
-                      ? act((s) => s.from("daily_schedule").update({ position_id: p.id, source: "manual" }).eq("id", backup.id))
-                      : act((s) =>
-                          s.from("daily_schedule").insert({
-                            date: row.date,
-                            slot: row.slot,
-                            position_id: p.id,
-                            pt_id: row.pt_id,
-                            priority: 2,
-                            source: "manual",
-                          }),
-                        )
+                    ? act(async (s) => {
+                        // 改到他備援的那個崗位：同崗位不能又是第一任務又是備援，備援拿掉
+                        if (backup && backup.position_id === p.id) {
+                          const removed = await s.from("daily_schedule").delete().eq("id", backup.id);
+                          if (removed.error) return removed;
+                        }
+                        return s.from("daily_schedule").update({ position_id: p.id, source: "manual" }).eq("id", row.id);
+                      })
+                    : act(async (s) => {
+                        const saved = backup
+                          ? await s.from("daily_schedule").update({ position_id: p.id, source: "manual" }).eq("id", backup.id)
+                          : await s.from("daily_schedule").insert({
+                              date: row.date,
+                              slot: row.slot,
+                              position_id: p.id,
+                              pt_id: row.pt_id,
+                              priority: 2,
+                              source: "manual",
+                            });
+                        if (saved.error || row.source !== "auto") return saved;
+                        // 備援是做完第一任務才去支援，第一任務一起鎖定，重排時才不會被移到別的崗位
+                        return s.from("daily_schedule").update({ source: "locked" }).eq("id", row.id);
+                      })
                 }
               >
                 {p.name}
@@ -260,7 +270,15 @@ export function WeekBoard({
           <button
             disabled={busy}
             className={button}
-            onClick={() => act((s) => s.from("daily_schedule").update({ source: "locked" }).eq("id", row.id))}
+            onClick={() =>
+              act((s) =>
+                s
+                  .from("daily_schedule")
+                  .update({ source: "locked" })
+                  // 鎖定備援時第一任務一起鎖定
+                  .in("id", row.priority === 2 && primary && primary.source === "auto" ? [row.id, primary.id] : [row.id]),
+              )
+            }
           >
             🔒 鎖定這一格
           </button>
