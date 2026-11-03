@@ -299,6 +299,7 @@ function buildContext(input) {
     taskTemplates: input.taskTemplates || [],
     taskRequests: input.taskRequests || [],
     lastSaturday: buildLastSaturdayMap(input), // ptId -> 最近一次上週六的日期（週六輪流用）
+    positionHistory: buildPositionHistory(input), // ptId|positionId -> 上週做這個崗位幾格（崗位輪流用）
     saturdayRotation: null, // 這週六怎麼挑人的說明（畫面上顯示用），見 assignSaturday
     fillTrace: [], // 每個時段崗位的補人順序與「能排人數」（驗證能排的人越少越先排用），見 fillByScarcity
     preferredPlan: [], // 有優先人選的崗位整週先規劃的結果，見 planPreferredPositions
@@ -681,6 +682,16 @@ function buildEligiblePool(positionIds, date, slot, ctx, excludeIds) {
     .map((s) => s.id);
 }
 
+// 崗位輪流（2026-11-03 使用者決議）：上週加這週已經排的格子裡，做這個崗位次數少的人先排，
+// 以時段為單位（同一天上午撿貨、下午包裝也可以）；次數一樣才照原本的挑人順序。優先人選不輪
+function rotateByPosition(ctx, positionId, rankedIds) {
+  const count = (ptId) =>
+    (ctx.positionHistory.get(`${ptId}|${positionId}`) || 0) +
+    ctx.scheduleRows.filter((r) => r.pt_id === ptId && r.position_id === positionId && r.priority === 1).length;
+  const counts = new Map(rankedIds.map((id) => [id, count(id)]));
+  return rankedIds.map((id, i) => ({ id, i })).sort((a, b) => counts.get(a.id) - counts.get(b.id) || a.i - b.i).map((x) => x.id);
+}
+
 // 把一個候選池塞進一個崗位的目標人數，回傳實際補進去的人數
 function fillPosition(ctx, date, slot, position, target, candidatePool, groupPositionIdsForRanking) {
   if (target <= 0) return 0;
@@ -699,7 +710,7 @@ function fillPosition(ctx, date, slot, position, target, candidatePool, groupPos
   const preferred = (ctx.preferredByPosition.get(position.id) || []).filter((id) => remainingPool.includes(id));
   const ranked = [
     ...preferred,
-    ...rankCandidates(remainingPool.filter((id) => !preferred.includes(id)), ctx, groupPositionIdsForRanking),
+    ...rotateByPosition(ctx, position.id, rankCandidates(remainingPool.filter((id) => !preferred.includes(id)), ctx, groupPositionIdsForRanking)),
   ];
 
   let added = 0;
@@ -1385,6 +1396,16 @@ const SATURDAY_SLOTS = ["上午出訂單前", "上午出訂單後", "下午出�
 // 再用既有的挑人順序（rankCandidates：三級崗位多 → 本週天數少 → 姓名）。
 // 「上次上週六」讀 input.pastSchedule（過去幾週的班表）＋ input.previousWeekSchedule。
 // ----------------------------------------------------------------------------
+
+function buildPositionHistory(input) {
+  const map = new Map();
+  for (const r of input.previousWeekSchedule || []) {
+    if ((r.priority || 1) !== 1) continue;
+    const key = `${r.pt_id}|${r.position_id}`;
+    map.set(key, (map.get(key) || 0) + 1);
+  }
+  return map;
+}
 
 function buildLastSaturdayMap(input) {
   const map = new Map();
@@ -2289,7 +2310,7 @@ function generateWeekSchedule(input) {
     ctx.warnings.push({
       type: "info",
       date: input.weekStart,
-      message: `本週有 ${PT_MAX_DAYS - ctx.ptMaxDays} 天放假，PT 每人最多排 ${ctx.ptMaxDays} 天（週六「多」組最多 ${PT_MAX_DAYS} 天）`,
+      message: `本週有 ${PT_MAX_DAYS - ctx.ptMaxDays} 天放假，PT 每人最多排 ${ctx.ptMaxDays} 天（週六B組最多 ${PT_MAX_DAYS} 天）`,
     });
   }
   if (ctx.priorityDaysFound.length > 0) {

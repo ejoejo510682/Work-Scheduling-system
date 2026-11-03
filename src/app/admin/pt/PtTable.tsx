@@ -31,7 +31,7 @@ type Pt = {
 
 type PtPatch = Partial<Omit<Pt, "id" | "name">>;
 
-// 「週六」一欄同時管 can_work_saturday 跟 saturday_group：PT 要分「多」「少」組，正職只分輪不輪
+// 「週六」一欄同時管 can_work_saturday 跟 saturday_group：PT 要分「多」「少」組（畫面上叫 B組、A組），正職只分輪不輪
 type SaturdayChoice = "多" | "少" | "輪流" | "不排";
 
 function saturdayChoiceOf(pt: Pick<Pt, "employment_type" | "can_work_saturday" | "saturday_group">) {
@@ -53,8 +53,8 @@ function saturdayOptions(type: EmploymentType): { value: SaturdayChoice; label: 
         { value: "不排", label: "不排週六" },
       ]
     : [
-        { value: "多", label: "「多」組" },
-        { value: "少", label: "「少」組" },
+        { value: "多", label: "B組" },
+        { value: "少", label: "A組" },
         { value: "不排", label: "不排週六" },
       ];
 }
@@ -399,7 +399,7 @@ export function PtTable({
         <div>
           <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">週六：</dt>
           <dd className="inline">
-            週六排 1 位正職＋3 位 PT（「多」組 2 位、「少」組 1 位，「多」是三級崗位多的人），組內離上次上週六最久的人先排。
+            週六排 1 位正職＋3 位 PT（B組 2 位、A組 1 位，B組是三級崗位多的人），組內離上次上週六最久的人先排。
           </dd>
         </div>
         <div>
