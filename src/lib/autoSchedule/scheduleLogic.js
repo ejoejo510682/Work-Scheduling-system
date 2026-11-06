@@ -296,6 +296,8 @@ function buildContext(input) {
     monthLeave: new Map(Object.entries(input.monthLeaveCounts || {})),
     // 第十次補充決議：崗位優先人選 position_id -> [pt_id...]（rank 小的在前）
     preferredByPosition: buildPreferredMap(input),
+    dailyDriverId: findDailyDriverId(usablePositions, activeStaff, abilities, input),
+    openWeekdays: getWeekDates(input.weekStart).slice(0, 5).filter((d) => !isHolidayDate(d, specialDates)).length,
     taskTemplates: input.taskTemplates || [],
     taskRequests: input.taskRequests || [],
     lastSaturday: buildLastSaturdayMap(input), // ptId -> 最近一次上週六的日期（週六輪流用）
@@ -368,6 +370,18 @@ function buildPreferredMap(input) {
     map.get(r.position_id).push(r.pt_id);
   }
   return map;
+}
+
+// 車趟每天都要有人（2026-11-06）：車趟人選週一～週五天天上班，不受 PT 4 天上限；週六不算在內。
+// 人選＝車趟優先人選第 1 位；沒設優先人選時，取車趟三級的人
+const DAILY_POSITION_NAME = "車趟";
+function findDailyDriverId(positions, activeStaff, abilities, input) {
+  const position = positions.find((p) => p.name === DAILY_POSITION_NAME);
+  if (!position) return null;
+  const preferred = (buildPreferredMap(input).get(position.id) || []).find((id) => activeStaff.some((s) => s.id === id));
+  if (preferred) return preferred;
+  const level3 = activeStaff.filter((s) => getLevel(s.id, position.id, abilities) === 3).sort((a, b) => a.name.localeCompare(b.name));
+  return level3.length ? level3[0].id : null;
 }
 
 function canWorkSaturday(staffRow) {
@@ -624,6 +638,7 @@ function ptMaxDaysFor(weekStart, specialDates) {
 
 // 週六「多」組的 PT（會的崗位多）不受連假週減少影響，最多都可以排 4 天（2026-10-25 補充決議）
 function ptCap(ctx, staffRow) {
+  if (staffRow.id === ctx.dailyDriverId) return ctx.openWeekdays;
   return staffRow.saturday_group === "多" ? PT_MAX_DAYS : ctx.ptMaxDays;
 }
 
