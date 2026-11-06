@@ -2028,6 +2028,13 @@ function shipsOnDay(ctx, ptId, date) {
   return ctx.scheduleRows.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1 && rowGroup(ctx, r) === GROUP_SHIPPING);
 }
 
+function shipsAllDay(ctx, ptId, date) {
+  const shipSlots = new Set(
+    ctx.scheduleRows.filter((r) => r.date === date && r.pt_id === ptId && r.priority === 1 && rowGroup(ctx, r) === GROUP_SHIPPING).map((r) => r.slot)
+  );
+  return MORNING_SLOTS.some((sl) => shipSlots.has(sl)) && AFTERNOON_SLOTS.some((sl) => shipSlots.has(sl));
+}
+
 function doesInboundOnDay(ctx, ptId, date) {
   return ctx.scheduleRows.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1 && rowGroup(ctx, r) === GROUP_INBOUND);
 }
@@ -2056,11 +2063,10 @@ function planInboundPtDays(ctx, weekdays, rotation, input) {
     if (fixed.length > 0) plan.set(d, fixed.map((s) => s.id));
   }
   const candidates = (d) => pts.filter((s) => !ships(s, d) && !onLeave(ctx, s.id, d) && room.get(s.id) - given.get(s.id) > 0);
-  // 另一位那天排了出貨、本來就會在公司做其他時段的進貨，這種日子最後才分，先顧沒人做進貨的日子
-  const covered = (d) => pts.some((s) => ships(s, d));
+  // 能做的人少的日子先分（另一位那天排出貨時只剩一位能做），天數不夠時缺人落在還有別人能做的日子
   const open = weekdays
     .filter((d) => !plan.has(d))
-    .sort((a, b) => Number(covered(a)) - Number(covered(b)) || candidates(a).length - candidates(b).length || (a < b ? -1 : 1));
+    .sort((a, b) => candidates(a).length - candidates(b).length || (a < b ? -1 : 1));
   for (const d of open) {
     // 週六、手動鎖定的天數一起算，兩位整週天數才會平均
     const total = (s) => (ctx.ptDaysUsedThisWeek.get(s.id) || 0) + given.get(s.id);
@@ -2095,11 +2101,11 @@ function planInboundPtDays(ctx, weekdays, rotation, input) {
 function checkInboundPtDay(ctx, date) {
   const pts = inboundPts(ctx);
   if (pts.length === 0) return;
-  const doing = pts.filter((s) => doesInboundOnDay(ctx, s.id, date));
-  if (doing.length === 0) {
-    ctx.warnings.push({ type: "shortage", date, message: `${date}：沒有進貨組 PT 做進貨（每天至少要一位）` });
+  // 上午、下午都排出貨（只剩出貨完成後做進貨）的不算；上午支援出貨、下午做進貨的算（2026-11-06 Cynthia 確認）
+  if (!pts.some((s) => doesInboundOnDay(ctx, s.id, date) && !shipsAllDay(ctx, s.id, date))) {
+    ctx.warnings.push({ type: "shortage", date, message: `${date}：沒有進貨組 PT 做進貨（每天至少要一位，上午、下午都排出貨的不算）` });
   }
-  const counted = doing.filter((s) => !shipsOnDay(ctx, s.id, date));
+  const counted = pts.filter((s) => doesInboundOnDay(ctx, s.id, date) && !shipsOnDay(ctx, s.id, date));
   if (counted.length >= 2) {
     ctx.warnings.push({
       type: "locked",
