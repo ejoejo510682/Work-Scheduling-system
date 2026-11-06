@@ -303,6 +303,7 @@ function buildContext(input) {
     saturdayRotation: null, // 這週六怎麼挑人的說明（畫面上顯示用），見 assignSaturday
     fillTrace: [], // 每個時段崗位的補人順序與「能排人數」（驗證能排的人越少越先排用），見 fillByScarcity
     preferredPlan: [], // 有優先人選的崗位整週先規劃的結果，見 planPreferredPositions
+    inboundPlan: new Map(), // date -> [ptId]：那天做進貨的進貨組 PT，見 planInboundPtDays
     slotTargets: new Map(), // date|slot|positionId -> 那格的目標人數（任務把人從處理進貨移走後要重算缺口用）
     taskLog: [], // 任務型崗位每一筆任務怎麼處理（排入／代班／跳過／留空），見 processTemplatesForDay、processRequestsForDay
     headcountRows,
@@ -1946,11 +1947,13 @@ function planFullTimeDaysOff(ctx, weekdays, rotation, saturday) {
 // 手動鎖定、優先人選先規劃好、輪到他印單的日子不動。
 function planPtDaysOff(ctx, weekdays, rotation) {
   const pts = ctx.activeStaff.filter((s) => s.employment_type === "PT" && s.auto_schedule_weekdays !== false);
-  const fixedDay = (s, d) => (ctx.lockedDaysByPt.get(s.id) || new Set()).has(d) || rotation.assignments.get(d) === s.id;
+  // 錯開規則分到做進貨的日子跟印單日一樣不能休（planInboundPtDays）
+  const reserved = (s, d) => rotation.assignments.get(d) === s.id || (ctx.inboundPlan.get(d) || []).includes(s.id);
+  const fixedDay = (s, d) => (ctx.lockedDaysByPt.get(s.id) || new Set()).has(d) || reserved(s, d);
   const flexibleDays = (s) => weekdays.filter((d) => !onLeave(ctx, s.id, d) && !fixedDay(s, d));
-  // 輪到他印單的日子還沒算進已用天數，但一定會上班，先扣掉
+  // 輪到他印單、分到做進貨的日子還沒算進已用天數，但一定會上班，先扣掉
   const printingDays = (s) =>
-    weekdays.filter((d) => rotation.assignments.get(d) === s.id && !onLeave(ctx, s.id, d) && !(ctx.lockedDaysByPt.get(s.id) || new Set()).has(d)).length;
+    weekdays.filter((d) => reserved(s, d) && !onLeave(ctx, s.id, d) && !(ctx.lockedDaysByPt.get(s.id) || new Set()).has(d)).length;
   const needOff = (s) =>
     flexibleDays(s).length - Math.max(0, ptCap(ctx, s) - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) - printingDays(s));
   // 預計上班人數：有空的人，扣掉天數已經被固定的日子（印單、手動鎖定等）用完、這天其實來不了的 PT
@@ -2038,7 +2041,11 @@ function planInboundPtDays(ctx, weekdays, rotation, input) {
     if (fixed.length > 0) plan.set(d, fixed.map((s) => s.id));
   }
   const candidates = (d) => pts.filter((s) => !ships(s, d) && !onLeave(ctx, s.id, d) && room.get(s.id) - given.get(s.id) > 0);
-  const open = weekdays.filter((d) => !plan.has(d)).sort((a, b) => candidates(a).length - candidates(b).length || (a < b ? -1 : 1));
+  // 另一位那天排了出貨、本來就會在公司做其他時段的進貨，這種日子最後才分，先顧沒人做進貨的日子
+  const covered = (d) => pts.some((s) => ships(s, d));
+  const open = weekdays
+    .filter((d) => !plan.has(d))
+    .sort((a, b) => Number(covered(a)) - Number(covered(b)) || candidates(a).length - candidates(b).length || (a < b ? -1 : 1));
   for (const d of open) {
     // 週六、手動鎖定的天數一起算，兩位整週天數才會平均
     const total = (s) => (ctx.ptDaysUsedThisWeek.get(s.id) || 0) + given.get(s.id);
@@ -2054,6 +2061,7 @@ function planInboundPtDays(ctx, weekdays, rotation, input) {
     given.set(pick.id, given.get(pick.id) + 1);
   }
 
+  ctx.inboundPlan = plan;
   for (const [d, ids] of plan) {
     const doer = ids.map((id) => lookupStaffName(ctx, id)).join("、");
     for (const s of pts) {
