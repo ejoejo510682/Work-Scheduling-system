@@ -1992,6 +1992,101 @@ function planPtDaysOff(ctx, weekdays, rotation) {
   }
 }
 
+// 十六之〇之一、進貨組 PT 錯開上班（2026-11-06 決議，記在 issue #1）
+//
+// 週一～週五每天剛好一位進貨組 PT 做進貨：兩位都有空時只排一位，另一位那天當成系統安排的休假。
+// 那天有排到出貨（手動指定、輪到印單、優先人選）的進貨組 PT 不算在這條規則裡。
+// 天數平均分：本週天數（含週六）少的先拿，一樣多時上週做進貨天數少的先拿（下週換過來），再來三級崗位多的。
+// 進貨組正職、週六不受限。
+function inboundPts(ctx) {
+  return ctx.activeStaff.filter((s) => s.employment_type === "PT" && s.primary_group === GROUP_INBOUND && s.auto_schedule_weekdays !== false);
+}
+
+function rowGroup(ctx, r) {
+  return (ctx.allPositionById.get(r.position_id) || {}).group;
+}
+
+function shipsOnDay(ctx, ptId, date) {
+  return ctx.scheduleRows.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1 && rowGroup(ctx, r) === GROUP_SHIPPING);
+}
+
+function doesInboundOnDay(ctx, ptId, date) {
+  return ctx.scheduleRows.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1 && rowGroup(ctx, r) === GROUP_INBOUND);
+}
+
+function planInboundPtDays(ctx, weekdays, rotation, input) {
+  const pts = inboundPts(ctx);
+  if (pts.length < 2) return;
+  const ships = (s, d) => shipsOnDay(ctx, s.id, d) || rotation.assignments.get(d) === s.id;
+  const lastWeek = new Map(
+    pts.map((s) => {
+      const rows = (input.previousWeekSchedule || []).filter((r) => r.pt_id === s.id && (r.priority || 1) === 1);
+      const days = new Set(rows.filter((r) => rowGroup(ctx, r) === GROUP_INBOUND).map((r) => r.date));
+      for (const r of rows) if (rowGroup(ctx, r) === GROUP_SHIPPING) days.delete(r.date);
+      return [s.id, days.size];
+    })
+  );
+  // 本週還能排幾天：上限扣掉已經用掉的（週六、手動鎖定）跟輪到印單、還沒算進去的日子
+  const printing = (s) => weekdays.filter((d) => rotation.assignments.get(d) === s.id && !(ctx.lockedDaysByPt.get(s.id) || new Set()).has(d)).length;
+  const room = new Map(pts.map((s) => [s.id, ptCap(ctx, s) - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) - printing(s)]));
+  const given = new Map(pts.map((s) => [s.id, 0]));
+  const plan = new Map();
+
+  // 已經鎖定做進貨的日子就是她的
+  for (const d of weekdays) {
+    const fixed = pts.filter((s) => !ships(s, d) && doesInboundOnDay(ctx, s.id, d));
+    if (fixed.length > 0) plan.set(d, fixed.map((s) => s.id));
+  }
+  const candidates = (d) => pts.filter((s) => !ships(s, d) && !onLeave(ctx, s.id, d) && room.get(s.id) - given.get(s.id) > 0);
+  const open = weekdays.filter((d) => !plan.has(d)).sort((a, b) => candidates(a).length - candidates(b).length || (a < b ? -1 : 1));
+  for (const d of open) {
+    // 週六、手動鎖定的天數一起算，兩位整週天數才會平均
+    const total = (s) => (ctx.ptDaysUsedThisWeek.get(s.id) || 0) + given.get(s.id);
+    const pick = candidates(d).sort(
+      (a, b) =>
+        total(a) - total(b) ||
+        lastWeek.get(a.id) - lastWeek.get(b.id) ||
+        countLevel3(b.id, ctx.abilities, ctx.inboundPositionIds) - countLevel3(a.id, ctx.abilities, ctx.inboundPositionIds) ||
+        a.name.localeCompare(b.name, "zh-Hant")
+    )[0];
+    if (!pick) continue;
+    plan.set(d, [pick.id]);
+    given.set(pick.id, given.get(pick.id) + 1);
+  }
+
+  for (const [d, ids] of plan) {
+    const doer = ids.map((id) => lookupStaffName(ctx, id)).join("、");
+    for (const s of pts) {
+      if (ids.includes(s.id) || ships(s, d) || onLeave(ctx, s.id, d)) continue;
+      markDayOff(ctx, s.id, d);
+      ctx.warnings.push({
+        type: "day_off",
+        date: d,
+        ptId: s.id,
+        message: `進貨組 PT 錯開上班：${d}（週${WEEKDAY_NAMES[getWeekdayIndex(d)]}）由 ${doer} 做進貨，${s.name} 這天不排，可以自己調整`,
+      });
+    }
+  }
+}
+
+function checkInboundPtDay(ctx, date) {
+  const pts = inboundPts(ctx);
+  if (pts.length === 0) return;
+  const doing = pts.filter((s) => doesInboundOnDay(ctx, s.id, date));
+  if (doing.length === 0) {
+    ctx.warnings.push({ type: "shortage", date, message: `${date}：沒有進貨組 PT 做進貨（每天至少要一位）` });
+  }
+  const counted = doing.filter((s) => !shipsOnDay(ctx, s.id, date));
+  if (counted.length >= 2) {
+    ctx.warnings.push({
+      type: "locked",
+      date,
+      ptId: counted[1].id,
+      message: `不符合規則：${date} ${counted.map((s) => s.name).join("、")} 同一天都做進貨（進貨組 PT 要錯開上班）`,
+    });
+  }
+}
+
 function validateFullTimeDays(ctx, weekDates) {
   for (const s of ctx.activeStaff.filter((x) => x.employment_type === "正職")) {
     const days = new Set(
@@ -2338,6 +2433,7 @@ function generateWeekSchedule(input) {
       });
       if (isSaturday(date)) {
         planPreferredPositions(ctx, workingWeekdays);
+        planInboundPtDays(ctx, workingWeekdays, rotation, input);
         planPtDaysOff(ctx, workingWeekdays, rotation);
       }
       continue;
@@ -2397,6 +2493,7 @@ function generateWeekSchedule(input) {
     if (isSaturday(date)) {
       planFullTimeDaysOff(ctx, workingWeekdays, rotation, date);
       planPreferredPositions(ctx, workingWeekdays);
+      planInboundPtDays(ctx, workingWeekdays, rotation, input);
       planPtDaysOff(ctx, workingWeekdays, rotation);
     }
   }
@@ -2607,6 +2704,7 @@ function checkWeekSchedule(input) {
         ctx.warnings.push({ type: "shortage", date, ptId: s.id, message: `${date}：正職 ${s.name} 當天有上班，但沒有排任何工作（正職一定要上工）` });
       }
       checkTasksForDay(ctx, date);
+      checkInboundPtDay(ctx, date);
     }
 
     // 有空沒排到的人、這天沒登記可上班時間的人
