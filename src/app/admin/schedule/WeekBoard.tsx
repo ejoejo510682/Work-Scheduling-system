@@ -61,6 +61,17 @@ function chipPrefix(row: Row, position: Position | undefined) {
   return "";
 }
 
+// 上午橘、下午紫、出貨完成後綠，同一時段的格子用左邊色條連在一起，Cynthia 反映原本小灰字看不清楚
+const MORNING = { border: "border-orange-400", bg: "bg-orange-50 dark:bg-orange-950/40", badge: "bg-orange-500" };
+const AFTERNOON = { border: "border-indigo-400", bg: "bg-indigo-50 dark:bg-indigo-950/40", badge: "bg-indigo-500" };
+const SLOT_STYLE: Record<string, { border: string; bg: string; badge: string }> = {
+  上午出訂單前: MORNING,
+  上午出訂單後: MORNING,
+  下午出訂單前: AFTERNOON,
+  下午出訂單後: AFTERNOON,
+  出貨完成後: { border: "border-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-950/40", badge: "bg-emerald-600" },
+};
+
 function cellId(date: string, slot: string, positionId: string) {
   return `cell-${date}-${slot}-${positionId}`;
 }
@@ -401,10 +412,16 @@ export function WeekBoard({
               const inSlot = positionsInSlot(d.date, slot);
               if (inSlot.length === 0) return null;
               if (d.isSaturday && slot === "出貨完成後" && !rows.some((r) => r.date === d.date && r.slot === slot)) return null;
+              const style = SLOT_STYLE[slot];
               return (
-                <div key={slot}>
-                  <div className="text-xs font-bold text-zinc-500 dark:text-zinc-400">{slot}</div>
-                  <div className="mt-0.5 space-y-0.5">{inSlot.map((p) => renderCell(d.date, slot, p))}</div>
+                <div key={slot} className={`border-l-4 pl-2 ${style.border}`}>
+                  <div className={`flex items-center gap-2 rounded-r px-2 py-1 ${style.bg}`}>
+                    <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${style.badge}`}>
+                      {SLOTS.indexOf(slot) + 1}
+                    </span>
+                    <span className="text-base font-bold text-zinc-900 dark:text-zinc-50">{slot}</span>
+                  </div>
+                  <div className="mt-1 space-y-0.5">{inSlot.map((p) => renderCell(d.date, slot, p))}</div>
                 </div>
               );
             })}
