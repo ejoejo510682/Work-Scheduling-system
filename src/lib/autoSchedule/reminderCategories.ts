@@ -7,6 +7,7 @@ export type CategoryKey =
   | "holiday"
   | "rule"
   | "conflict"
+  | "shipToInbound"
   | "surplus"
   | "noAvail"
   | "days"
@@ -21,6 +22,7 @@ export const CATEGORIES: { key: CategoryKey; label: string; level: ReminderLevel
   { key: "holiday", label: "假日有變動", level: "要處理", hint: "草稿是用舊的假日資料排的，按「重排整週」套用新的假日。" },
   { key: "rule", label: "不符合規則", level: "要處理", hint: "每則都寫出違反哪一條。可以接受就勾已看過；不行就點名字改掉或解除鎖定。" },
   { key: "conflict", label: "指定的人有衝突", level: "要處理", hint: "本週任務指定的人那個時段已經有別的工作或請假，改指定別人或手動調整。" },
+  { key: "shipToInbound", label: "出貨組排去進貨", level: "要處理", hint: "出貨組的人在出訂單後的時段被排去處理進貨，代表出貨崗位沒有他的位置。點名字可以改去出貨崗位，或改他的上班時間；手動排的不會出現在這裡。" },
   { key: "surplus", label: "人力過剩", level: "參考", hint: "這些人有空但沒排到工作，或上班當天有時段空著（正職的非出貨時段留給你手動安排），可以安排處理進貨或其他工作。" },
   { key: "noAvail", label: "沒登記可上班時間", level: "參考", hint: "系統先當全天可上班排了，請提醒本人登記。" },
   { key: "days", label: "出貨優先日／放假資訊", level: "參考", hint: "這週哪幾天加人、哪幾天不排班。" },

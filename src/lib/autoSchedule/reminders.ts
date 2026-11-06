@@ -201,6 +201,12 @@ export function buildReminders({
           targets: [{ date, slot: w.slot, positionId: w.positionId, ptId: w.ptId }],
         });
         break;
+      case "shipping_on_inbound":
+        push("shipToInbound", {
+          title: `${dl(date)} ${w.slot} ${staffName(w.ptId ?? "")} 排去${positionName(w.positionId ?? "")}`,
+          targets: [{ date, slot: w.slot, positionId: w.positionId, ptId: w.ptId }],
+        });
+        break;
       case "surplus":
         push("surplus", {
           title: w.slot ? `${dl(date)} ${w.slot} ${staffName(w.ptId ?? "")} 沒有工作` : `${dl(date)} ${staffName(w.ptId ?? "")} 有空、整天沒排到`,

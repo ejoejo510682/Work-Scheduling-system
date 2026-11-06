@@ -2116,6 +2116,23 @@ function checkInboundPtDay(ctx, date) {
   }
 }
 
+// 出貨組的人在出訂單後被系統排去進貨＝出貨崗位沒有他的位置，提醒 Cynthia 重新安排（2026-11-06）；手動排的不提醒
+function checkShippingStaffOnInbound(ctx, date) {
+  for (const r of ctx.scheduleRows) {
+    if (r.date !== date || r.priority !== 1 || r.source !== "auto" || NON_SHIPPING_SLOTS.includes(r.slot)) continue;
+    const s = ctx.activeStaff.find((x) => x.id === r.pt_id);
+    if (!s || s.primary_group !== GROUP_SHIPPING || rowGroup(ctx, r) !== GROUP_INBOUND) continue;
+    ctx.warnings.push({
+      type: "shipping_on_inbound",
+      date,
+      slot: r.slot,
+      positionId: r.position_id,
+      ptId: r.pt_id,
+      message: `${date} ${r.slot}：出貨組的 ${s.name} 被排去${r.position_name}，請看要不要重新安排`,
+    });
+  }
+}
+
 function validateFullTimeDays(ctx, weekDates) {
   for (const s of ctx.activeStaff.filter((x) => x.employment_type === "正職")) {
     const days = new Set(
@@ -2734,6 +2751,7 @@ function checkWeekSchedule(input) {
       }
       checkTasksForDay(ctx, date);
       checkInboundPtDay(ctx, date);
+      checkShippingStaffOnInbound(ctx, date);
     }
 
     // 有空沒排到的人、這天沒登記可上班時間的人

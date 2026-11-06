@@ -36,7 +36,7 @@ type Where = { date: string; slot?: string; positionId?: string; ptId?: string }
 type MenuState = { rowId: string; mode: "main" | "move" | "backup" } | null;
 
 // 會在格子上標出問題的提醒分類
-const CELL_PROBLEM_CATS: CategoryKey[] = ["shortage", "rule", "task", "conflict"];
+const CELL_PROBLEM_CATS: CategoryKey[] = ["shortage", "rule", "task", "conflict", "shipToInbound"];
 
 const legend = [
   { label: "系統排的", className: "px-1 text-zinc-800 dark:text-zinc-200" },
@@ -160,6 +160,7 @@ export function WeekBoard({
     if (r.catKey === "shortage") return r.title.match(/缺 \d+ 人/)?.[0] ?? "缺人";
     if (r.catKey === "rule") return r.title.split("：").pop() ?? "不符合規則";
     if (r.catKey === "conflict") return "指定的人有衝突";
+    if (r.catKey === "shipToInbound") return "出貨組排去進貨，要重新安排";
     return r.title.match(/需要安排 \d+ 人/)?.[0] ?? "任務待處理";
   }
 
