@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   const { error } = await supabase
     .from("pt_daily_availability")
     .upsert(
-      entries.map((e) => ({ pt_id, date: e.date, range: e.range })),
+      entries.map((e) => ({ pt_id, date: e.date, range: e.range, filled_by: "本人" })),
       { onConflict: "pt_id,date" },
     );
 

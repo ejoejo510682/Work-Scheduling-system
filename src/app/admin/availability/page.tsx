@@ -21,7 +21,7 @@ export default async function AvailabilityPage({
     getCachedActivePt(),
     supabase
       .from("pt_daily_availability")
-      .select("pt_id, date, range")
+      .select("pt_id, date, range, filled_by")
       .gte("date", monday)
       .lte("date", sunday),
   ]);
@@ -34,6 +34,9 @@ export default async function AvailabilityPage({
       <h1 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">可上班範圍登記</h1>
       <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
         每人每天預設「全天」；半天班、臨時半天請假、整天請假都在這裡設定，週排班的建議名單會依此自動排除。
+      </p>
+      <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        每格下面的小字是最後誰填的：「本人」＝員工自己填寫，名字＝後台帳號改的；2026/11/07 以前的資料沒有紀錄，不會顯示。
       </p>
 
       <div className="mt-4 flex items-center gap-3">

@@ -8,7 +8,7 @@ import { AVAILABILITY_RANGES, type AvailabilityRange, type EmploymentType } from
 import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
 type Pt = { id: string; name: string; employment_type: EmploymentType };
-type Availability = { pt_id: string; date: string; range: string };
+type Availability = { pt_id: string; date: string; range: string; filled_by: string | null };
 
 const rangeStyles: Record<string, string> = {
   全天: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300",
@@ -34,6 +34,9 @@ export function AvailabilityGrid({
       initialAvailability.map((a) => [`${a.pt_id}:${a.date}`, a.range as AvailabilityRange]),
     ),
   );
+  const [filledBy, setFilledBy] = useState<Map<string, string>>(
+    new Map(initialAvailability.filter((a) => a.filled_by).map((a) => [`${a.pt_id}:${a.date}`, a.filled_by as string])),
+  );
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
   async function handleChange(ptId: string, date: string, range: AvailabilityRange) {
@@ -41,9 +44,12 @@ export function AvailabilityGrid({
     setSavingKey(key);
 
     const supabase = createClient();
-    const { error } = await supabase
+    // filled_by 由資料庫依登入帳號填入，存完讀回來顯示
+    const { data, error } = await supabase
       .from("pt_daily_availability")
-      .upsert({ pt_id: ptId, date, range }, { onConflict: "pt_id,date" });
+      .upsert({ pt_id: ptId, date, range }, { onConflict: "pt_id,date" })
+      .select("filled_by")
+      .single();
 
     setSavingKey(null);
 
@@ -53,6 +59,7 @@ export function AvailabilityGrid({
     }
 
     setRanges((prev) => new Map(prev).set(key, range));
+    if (data?.filled_by) setFilledBy((prev) => new Map(prev).set(key, data.filled_by));
     router.refresh();
   }
 
@@ -101,6 +108,9 @@ export function AvailabilityGrid({
                         </option>
                       ))}
                     </select>
+                    {filledBy.has(key) && (
+                      <div className="mt-0.5 text-[11px] text-zinc-500 dark:text-zinc-400">{filledBy.get(key)}</div>
+                    )}
                   </td>
                 );
               })}
