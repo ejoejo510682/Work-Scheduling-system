@@ -1313,14 +1313,14 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
     return sum + Math.max(0, inboundTargets.get(p.id) - filled);
   }, 0);
 
-  // step2：出貨仍缺 → 平常不補（出貨缺人就跳警示）；只有出貨優先日，才讓進貨組的
-  // 人補出貨缺口。進貨組的人此時已經先在 step1 填過自己的進貨崗位，剩下沒被排到的
-  // 才會進到這個候選池，所以等於「出貨組的人用完了，才輪到進貨組支援」。
-  const shippingInboundCandidates = isPriority && slot === INBOUND_SUPPORT_SLOT
+  // step2：出貨仍缺 → 進貨組的人補出貨缺口（出貨組的人用完了，才輪到進貨組支援）。
+  // 進貨組 PT 每個平日上午都支援出貨（2026-11-15 Cynthia 決議）；進貨組正職照舊只有出貨優先日支援
+  const dailySupportPt = (s) => s.employment_type === "PT" && s.primary_group === GROUP_INBOUND && !s.skip_priority_shipping_support;
+  const shippingInboundCandidates = slot === INBOUND_SUPPORT_SLOT
     ? new Set(
         buildEligiblePool(shippingPositions.map((p) => p.id), date, slot, ctx, null).filter((id) => {
           const s = ctx.activeStaff.find((x) => x.id === id);
-          return s.primary_group === GROUP_INBOUND && !s.skip_priority_shipping_support;
+          return s.primary_group === GROUP_INBOUND && !s.skip_priority_shipping_support && (isPriority || s.employment_type === "PT");
         })
       )
     : new Set();
@@ -1367,6 +1367,21 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
 
   fillByScarcity(ctx, date, slot, shippingPositions, shippingTargets, [...shippingInboundCandidates], ctx.shippingPositionIds, shipAllocation, "出貨優先日進貨組支援", true);
   fillByScarcity(ctx, date, slot, inboundPositions, inboundTargets, [...inboundShippingCandidates], ctx.inboundPositionIds, inAllocation, "出貨組PT補進貨");
+  // 出貨缺口補完了，還沒排到的進貨組 PT 一樣上午去出貨（多出來的支援人力），排到相對人最少的出貨崗位
+  for (const id of shippingInboundCandidates) {
+    const s = ctx.activeStaff.find((x) => x.id === id);
+    if (!dailySupportPt(s) || isAssignedThisSlot(ctx, date, slot, id)) continue;
+    const hasLevel3 = (p) =>
+      ctx.scheduleRows.some((r) => r.date === date && r.slot === slot && r.position_id === p.id && r.priority === 1 && getLevel(r.pt_id, p.id, ctx.abilities) === 3);
+    const room = (p) => currentPriorityCount(ctx, date, slot, p.id) - (shippingTargets.get(p.id) || 0);
+    const pos = shippingPositions
+      .filter((p) => {
+        const level = getLevel(id, p.id, ctx.abilities);
+        return (level === 3 || (level === 2 && hasLevel3(p))) && positionAllowed(s, p) && hasCapacity(ctx, date, slot, p) && !hasBackupHere(ctx, date, slot, id, p.id);
+      })
+      .sort((a, b) => room(a) - room(b) || (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
+    if (pos) commitAssignment(ctx, date, slot, pos, id, 1);
+  }
 
   // 填完之後，再檢查一次還有沒有真正排不出來的缺口（非週三～週五的人手不足，或分攤後仍然不夠）
   // 【補充決議】每個出貨崗位在它適用的時段裡至少要排到 1 人是硬性規則（只適用平日，
@@ -2013,7 +2028,7 @@ function planPtDaysOff(ctx, weekdays, rotation) {
 // 十六之〇之一、進貨組 PT 錯開上班（2026-11-06 決議，記在 issue #1）
 //
 // 週一～週五每天剛好一位進貨組 PT 做進貨：兩位都有空時只排一位，另一位那天當成系統安排的休假。
-// 那天有排到出貨（手動指定、輪到印單、優先人選）的進貨組 PT 不算在這條規則裡。
+// 那天上午、下午都排出貨（手動指定、輪到印單）的進貨組 PT 不算在這條規則裡；每天上午支援出貨（2026-11-15）照樣算。
 // 天數平均分：本週天數（含週六）少的先拿，一樣多時上週做進貨天數少的先拿（下週換過來），再來三級崗位多的。
 // 進貨組正職、週六不受限。
 function inboundPts(ctx) {
@@ -2022,10 +2037,6 @@ function inboundPts(ctx) {
 
 function rowGroup(ctx, r) {
   return (ctx.allPositionById.get(r.position_id) || {}).group;
-}
-
-function shipsOnDay(ctx, ptId, date) {
-  return ctx.scheduleRows.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1 && rowGroup(ctx, r) === GROUP_SHIPPING);
 }
 
 function shipsAllDay(ctx, ptId, date) {
@@ -2042,7 +2053,8 @@ function doesInboundOnDay(ctx, ptId, date) {
 function planInboundPtDays(ctx, weekdays, rotation, input) {
   const pts = inboundPts(ctx);
   if (pts.length < 2) return;
-  const ships = (s, d) => shipsOnDay(ctx, s.id, d) || rotation.assignments.get(d) === s.id;
+  // 進貨組 PT 每天上午都支援出貨（2026-11-15），只有上午、下午都排出貨的才不算在錯開規則裡
+  const ships = (s, d) => shipsAllDay(ctx, s.id, d) || rotation.assignments.get(d) === s.id;
   const lastWeek = new Map(
     pts.map((s) => {
       const rows = (input.previousWeekSchedule || []).filter((r) => r.pt_id === s.id && (r.priority || 1) === 1);
@@ -2059,7 +2071,7 @@ function planInboundPtDays(ctx, weekdays, rotation, input) {
 
   // 已經鎖定做進貨的日子就是她的
   for (const d of weekdays) {
-    const fixed = pts.filter((s) => !ships(s, d) && doesInboundOnDay(ctx, s.id, d));
+    const fixed = pts.filter((s) => !ships(s, d) && (doesInboundOnDay(ctx, s.id, d) || (ctx.lockedDaysByPt.get(s.id) || new Set()).has(d)));
     if (fixed.length > 0) plan.set(d, fixed.map((s) => s.id));
   }
   const candidates = (d) => pts.filter((s) => !ships(s, d) && !onLeave(ctx, s.id, d) && room.get(s.id) - given.get(s.id) > 0);
@@ -2105,7 +2117,7 @@ function checkInboundPtDay(ctx, date) {
   if (!pts.some((s) => doesInboundOnDay(ctx, s.id, date) && !shipsAllDay(ctx, s.id, date))) {
     ctx.warnings.push({ type: "shortage", date, message: `${date}：沒有進貨組 PT 做進貨（每天至少要一位，上午、下午都排出貨的不算）` });
   }
-  const counted = pts.filter((s) => doesInboundOnDay(ctx, s.id, date) && !shipsOnDay(ctx, s.id, date));
+  const counted = pts.filter((s) => doesInboundOnDay(ctx, s.id, date) && !shipsAllDay(ctx, s.id, date));
   if (counted.length >= 2) {
     ctx.warnings.push({
       type: "locked",
