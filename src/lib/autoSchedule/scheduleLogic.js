@@ -2440,7 +2440,61 @@ function warnUnplacedRequests(ctx, weekDates) {
 // 十七、主流程：generateWeekSchedule
 // ----------------------------------------------------------------------------
 
+// 人力精實（2026-11-15 Cynthia 決議）：出貨組的人在出貨時段（上午／下午出訂單後）被排去做進貨，代表那半天出貨人力過剩，
+// 改成那半天休假再重排一次，直到沒有這種情況；整天都沒有出貨工作才整天休假。那半天有手動格子的不動
+const HALF_OF_SHIPPING_SLOT = { 上午出訂單後: "上午", 下午出訂單後: "下午" };
+const RANGE_HALVES = { 全天: ["上午", "下午"], 只上午: ["上午"], 只下午: ["下午"], 全天休假: [] };
+const HALF_SLOTS = { 上午: MORNING_SLOTS, 下午: [...AFTERNOON_SLOTS, "出貨完成後"] };
+
 function generateWeekSchedule(input) {
+  const halvesOff = new Map(); // ptId|date -> Set("上午"|"下午")
+  const staffById = new Map(input.staff.map((s) => [s.id, s]));
+  const groupById = new Map(input.positions.map((p) => [p.id, p.group]));
+  const runOnce = () => {
+    const availability = input.availability.filter((a) => !halvesOff.has(`${a.pt_id}|${a.date}`));
+    for (const [key, off] of halvesOff) {
+      const [pt_id, date] = key.split("|");
+      const registered = input.availability.find((a) => a.pt_id === pt_id && a.date === date);
+      const left = RANGE_HALVES[registered ? registered.range : "全天"].filter((h) => !off.has(h));
+      availability.push({ pt_id, date, range: left.length === 2 ? "全天" : left.length === 1 ? `只${left[0]}` : "全天休假" });
+    }
+    return generateWeekScheduleOnce({ ...input, availability });
+  };
+  let result = runOnce();
+  for (let round = 0; round < 10; round++) {
+    let added = false;
+    for (const r of result.schedule) {
+      const half = HALF_OF_SHIPPING_SLOT[r.slot];
+      const staffRow = staffById.get(r.pt_id);
+      if (!half || r.source !== "auto" || r.priority !== 1 || !staffRow || staffRow.primary_group !== GROUP_SHIPPING) continue;
+      if (groupById.get(r.position_id) !== GROUP_INBOUND) continue;
+      const manualHere = result.schedule.some((x) => x.date === r.date && x.pt_id === r.pt_id && x.source !== "auto" && HALF_SLOTS[half].includes(x.slot));
+      if (manualHere) continue;
+      const key = `${r.pt_id}|${r.date}`;
+      if (!halvesOff.has(key)) halvesOff.set(key, new Set());
+      if (!halvesOff.get(key).has(half)) {
+        halvesOff.get(key).add(half);
+        added = true;
+      }
+    }
+    if (!added) break;
+    result = runOnce();
+  }
+  for (const [key, off] of halvesOff) {
+    const [ptId, date] = key.split("|");
+    const worksToday = result.schedule.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1);
+    const what = !worksToday ? "整天出貨都排滿了，系統安排這天休假" : `${[...off].join("、")}出貨已經排滿，系統安排${[...off].join("、")}休假`;
+    result.warnings.push({
+      type: "day_off",
+      date,
+      ptId,
+      message: `人力精實：${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${staffById.get(ptId).name} ${what}（出貨組不排去做進貨），可以自己調整`,
+    });
+  }
+  return result;
+}
+
+function generateWeekScheduleOnce(input) {
   const ctx = buildContext(input);
   const weekDates = getWeekDates(input.weekStart);
   const printerPosition = ctx.positions.find((p) => p.name === "印訂單");

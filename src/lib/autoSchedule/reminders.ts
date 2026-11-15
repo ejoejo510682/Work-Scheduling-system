@@ -208,6 +208,9 @@ export function buildReminders({
         });
         break;
       case "surplus":
+        // 系統依人力精實安排的半天／整天休假，那段空著是刻意的，不再列成人力過剩
+        if (w.ptId && notes.some((n) => n.type === "day_off" && n.ptId === w.ptId && n.date === date && n.message.startsWith("人力精實") &&
+          (!w.slot || n.message.includes("這天休假") || n.message.includes(`${w.slot.startsWith("上午") ? "上午" : "下午"}休假`)))) break;
         push("surplus", {
           title: w.slot ? `${dl(date)} ${w.slot} ${staffName(w.ptId ?? "")} 沒有工作` : `${dl(date)} ${staffName(w.ptId ?? "")} 有空、整天沒排到`,
           targets: [{ date, slot: w.slot, ptId: w.ptId }],
