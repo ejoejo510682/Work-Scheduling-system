@@ -1314,8 +1314,8 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
   }, 0);
 
   // step2：出貨仍缺 → 進貨組的人補出貨缺口（出貨組的人用完了，才輪到進貨組支援）。
-  // 進貨組 PT 每個平日上午都支援出貨（2026-11-15 Cynthia 決議）；進貨組正職照舊只有出貨優先日支援
-  const dailySupportPt = (s) => s.employment_type === "PT" && s.primary_group === GROUP_INBOUND && !s.skip_priority_shipping_support;
+  // 進貨組 PT 每個平日上午都能支援出貨（2026-11-15），但出貨組優先：出貨組排滿了就不硬塞，上午改休假（2026-11-17，見 generateWeekSchedule）。
+  // 進貨組正職照舊只有出貨優先日支援
   const shippingInboundCandidates = slot === INBOUND_SUPPORT_SLOT
     ? new Set(
         buildEligiblePool(shippingPositions.map((p) => p.id), date, slot, ctx, null).filter((id) => {
@@ -1367,21 +1367,6 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
 
   fillByScarcity(ctx, date, slot, shippingPositions, shippingTargets, [...shippingInboundCandidates], ctx.shippingPositionIds, shipAllocation, "出貨優先日進貨組支援", true);
   fillByScarcity(ctx, date, slot, inboundPositions, inboundTargets, [...inboundShippingCandidates], ctx.inboundPositionIds, inAllocation, "出貨組PT補進貨");
-  // 出貨缺口補完了，還沒排到的進貨組 PT 一樣上午去出貨（多出來的支援人力），排到相對人最少的出貨崗位
-  for (const id of shippingInboundCandidates) {
-    const s = ctx.activeStaff.find((x) => x.id === id);
-    if (!dailySupportPt(s) || isAssignedThisSlot(ctx, date, slot, id)) continue;
-    const hasLevel3 = (p) =>
-      ctx.scheduleRows.some((r) => r.date === date && r.slot === slot && r.position_id === p.id && r.priority === 1 && getLevel(r.pt_id, p.id, ctx.abilities) === 3);
-    const room = (p) => currentPriorityCount(ctx, date, slot, p.id) - (shippingTargets.get(p.id) || 0);
-    const pos = shippingPositions
-      .filter((p) => {
-        const level = getLevel(id, p.id, ctx.abilities);
-        return (level === 3 || (level === 2 && hasLevel3(p))) && positionAllowed(s, p) && hasCapacity(ctx, date, slot, p) && !hasBackupHere(ctx, date, slot, id, p.id);
-      })
-      .sort((a, b) => room(a) - room(b) || (a.sort_order ?? 0) - (b.sort_order ?? 0))[0];
-    if (pos) commitAssignment(ctx, date, slot, pos, id, 1);
-  }
 
   // 填完之後，再檢查一次還有沒有真正排不出來的缺口（非週三～週五的人手不足，或分攤後仍然不夠）
   // 【補充決議】每個出貨崗位在它適用的時段裡至少要排到 1 人是硬性規則（只適用平日，
@@ -2441,10 +2426,12 @@ function warnUnplacedRequests(ctx, weekDates) {
 // ----------------------------------------------------------------------------
 
 // 人力精實（2026-11-15 Cynthia 決議）：出貨組的人在出貨時段（上午／下午出訂單後）被排去做進貨，代表那半天出貨人力過剩，
-// 改成那半天休假再重排一次，直到沒有這種情況；整天都沒有出貨工作才整天休假。那半天有手動格子的不動
+// 改成那半天休假再重排一次，直到沒有這種情況；整天都沒有出貨工作才整天休假。那半天有手動格子的不動。
+// 進貨組 PT 也一樣（2026-11-17 Cynthia 決議「出貨組優先」）：平日上午出貨已經被出貨組排滿、他沒排進出貨，就休上午、下午照常做進貨
 const HALF_OF_SHIPPING_SLOT = { 上午出訂單後: "上午", 下午出訂單後: "下午" };
 const RANGE_HALVES = { 全天: ["上午", "下午"], 只上午: ["上午"], 只下午: ["下午"], 全天休假: [] };
 const HALF_SLOTS = { 上午: MORNING_SLOTS, 下午: [...AFTERNOON_SLOTS, "出貨完成後"] };
+const morningSupportPt = (s) => s.employment_type === "PT" && s.primary_group === GROUP_INBOUND && !s.skip_priority_shipping_support;
 
 function generateWeekSchedule(input) {
   const halvesOff = new Map(); // ptId|date -> Set("上午"|"下午")
@@ -2466,8 +2453,8 @@ function generateWeekSchedule(input) {
     for (const r of result.schedule) {
       const half = HALF_OF_SHIPPING_SLOT[r.slot];
       const staffRow = staffById.get(r.pt_id);
-      if (!half || r.source !== "auto" || r.priority !== 1 || !staffRow || staffRow.primary_group !== GROUP_SHIPPING) continue;
-      if (groupById.get(r.position_id) !== GROUP_INBOUND) continue;
+      if (!half || r.source !== "auto" || r.priority !== 1 || !staffRow || groupById.get(r.position_id) !== GROUP_INBOUND) continue;
+      if (staffRow.primary_group !== GROUP_SHIPPING && !(morningSupportPt(staffRow) && r.slot === INBOUND_SUPPORT_SLOT && !isSaturday(r.date))) continue;
       const manualHere = result.schedule.some((x) => x.date === r.date && x.pt_id === r.pt_id && x.source !== "auto" && HALF_SLOTS[half].includes(x.slot));
       if (manualHere) continue;
       const key = `${r.pt_id}|${r.date}`;
@@ -2483,12 +2470,16 @@ function generateWeekSchedule(input) {
   for (const [key, off] of halvesOff) {
     const [ptId, date] = key.split("|");
     const worksToday = result.schedule.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1);
+    const staffRow = staffById.get(ptId);
+    const day = `${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${staffRow.name}`;
     const what = !worksToday ? "整天出貨都排滿了，系統安排這天休假" : `${[...off].join("、")}出貨已經排滿，系統安排${[...off].join("、")}休假`;
     result.warnings.push({
       type: "day_off",
       date,
       ptId,
-      message: `人力精實：${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${staffById.get(ptId).name} ${what}（出貨組不排去做進貨），可以自己調整`,
+      message: morningSupportPt(staffRow)
+        ? `人力精實：${day} 上午出貨已經由出貨組排滿，不用進貨組支援，系統安排上午休假、下午做進貨，可以自己調整`
+        : `人力精實：${day} ${what}（出貨組不排去做進貨），可以自己調整`,
     });
   }
   return result;
