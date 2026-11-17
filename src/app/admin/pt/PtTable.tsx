@@ -27,6 +27,19 @@ type Pt = {
   is_weekday_printer: boolean;
   shipping_support_position_id: string | null;
   skip_priority_shipping_support: boolean;
+  schedule_order: ScheduleOrder;
+};
+
+type ScheduleOrder = "優先" | "一般" | "最後";
+const SCHEDULE_ORDERS: { value: ScheduleOrder; label: string }[] = [
+  { value: "優先", label: "優先" },
+  { value: "一般", label: "一般" },
+  { value: "最後", label: "最後才排" },
+];
+const orderSelectStyles: Record<ScheduleOrder, string> = {
+  優先: "border-emerald-400 dark:border-emerald-700",
+  一般: "",
+  最後: "border-red-400 dark:border-red-700",
 };
 
 type PtPatch = Partial<Omit<Pt, "id" | "name">>;
@@ -196,6 +209,7 @@ export function PtTable({
               <th className="px-3 py-2">主要組別</th>
               <th className="px-3 py-2">性別</th>
               <th className="px-3 py-2">週六</th>
+              <th className="px-3 py-2">排班順序</th>
               <th className="px-3 py-2">平日自動排班</th>
               <th className="px-3 py-2">平日正職印單</th>
               <th className="px-3 py-2">出貨優先日不支援出貨</th>
@@ -313,6 +327,24 @@ export function PtTable({
                     </select>
                   </td>
                   <td className="px-3 py-2">
+                    {pt.employment_type === "PT" ? (
+                      <select
+                        value={pt.schedule_order}
+                        disabled={busy}
+                        onChange={(e) => updatePt(pt, { schedule_order: e.target.value as ScheduleOrder })}
+                        className={`${selectClass} ${orderSelectStyles[pt.schedule_order]}`}
+                      >
+                        {SCHEDULE_ORDERS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-zinc-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
                     <input
                       type="checkbox"
                       checked={pt.auto_schedule_weekdays}
@@ -400,6 +432,12 @@ export function PtTable({
           <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">週六：</dt>
           <dd className="inline">
             週六排 1 位正職＋3 位 PT（B組 2 位、A組 1 位，B組是三級崗位多的人），組內離上次上週六最久的人先排。
+          </dd>
+        </div>
+        <div>
+          <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">排班順序：</dt>
+          <dd className="inline">
+            挑人時「優先」的先排、「最後才排」的最後排；人多要砍班時「最後才排」的先休，缺人時還是會排他。每週最多幾天在「可上班範圍登記」設定。
           </dd>
         </div>
         <div>

@@ -17,15 +17,39 @@ const rangeStyles: Record<string, string> = {
   全天休假: "bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400",
 };
 
+type DayLimit = { maxDays: number | null; fromWeek: string };
+
+const DAY_LIMIT_OPTIONS = [3, 2, 1];
+
 export function AvailabilityGrid({
   monday,
   pt,
   initialAvailability,
+  initialDayLimits,
 }: {
   monday: string;
   pt: Pt[];
   initialAvailability: Availability[];
+  initialDayLimits: Record<string, DayLimit>;
 }) {
+  const [dayLimits, setDayLimits] = useState<Record<string, DayLimit>>(initialDayLimits);
+
+  async function handleLimitChange(ptId: string, maxDays: number | null) {
+    const key = `${ptId}:limit`;
+    setSavingKey(key);
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("pt_weekly_day_limits")
+      .upsert({ pt_id: ptId, week_start: monday, max_days: maxDays, updated_at: new Date().toISOString() }, { onConflict: "pt_id,week_start" });
+    setSavingKey(null);
+    if (error) {
+      alert(`儲存失敗：${error.message}`);
+      return;
+    }
+    setDayLimits((prev) => ({ ...prev, [ptId]: { maxDays, fromWeek: monday } }));
+    router.refresh();
+  }
+
   const router = useRouter();
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
 
@@ -73,6 +97,7 @@ export function AvailabilityGrid({
         <thead className="bg-zinc-100 dark:bg-zinc-800">
           <tr>
             <th className="sticky left-0 bg-zinc-100 px-3 py-2 text-left dark:bg-zinc-800">人員</th>
+            <th className="px-3 py-2 text-left whitespace-nowrap">本週最多</th>
             {days.map((date, i) => (
               <th key={date} className="px-3 py-2 text-left whitespace-nowrap">
                 週{WEEKDAY_LABELS[i]} {formatDateLabel(date)}
@@ -88,6 +113,36 @@ export function AvailabilityGrid({
                   {person.name}
                   <EmploymentTypeBadge type={person.employment_type} />
                 </span>
+              </td>
+              <td className="px-3 py-2">
+                {person.employment_type === "PT" ? (
+                  <>
+                    <select
+                      value={dayLimits[person.id]?.maxDays ?? ""}
+                      disabled={savingKey === `${person.id}:limit`}
+                      onChange={(e) => handleLimitChange(person.id, e.target.value ? Number(e.target.value) : null)}
+                      className={`rounded border px-2 py-1 text-xs font-medium ${
+                        dayLimits[person.id]?.maxDays
+                          ? "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+                          : "border-zinc-300 bg-white text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                      }`}
+                    >
+                      <option value="">照規則</option>
+                      {DAY_LIMIT_OPTIONS.map((n) => (
+                        <option key={n} value={n}>
+                          {n} 天
+                        </option>
+                      ))}
+                    </select>
+                    {dayLimits[person.id]?.maxDays != null && dayLimits[person.id].fromWeek !== monday && (
+                      <div className="mt-0.5 text-[11px] whitespace-nowrap text-zinc-500 dark:text-zinc-400">
+                        沿用 {formatDateLabel(dayLimits[person.id].fromWeek)} 那週
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-zinc-400">—</span>
+                )}
               </td>
               {days.map((date) => {
                 const key = `${person.id}:${date}`;

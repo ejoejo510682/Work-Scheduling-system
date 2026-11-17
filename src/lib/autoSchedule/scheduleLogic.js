@@ -292,6 +292,7 @@ function buildContext(input) {
     // 的崗位整週先規劃排到的日子（planPreferredPositions）。這些日子一開始就算進 PT 4 天上限
     lockedDaysByPt: new Map(),
     ptMaxDays: ptMaxDaysFor(input.weekStart, specialDates),
+    weeklyDayLimits: new Map(Object.entries(input.weeklyDayLimits || {})), // ptId -> 本週最多天數（可上班範圍登記頁設定）
     // ptId -> 這個月登記全天休假的天數（挑人時請假少的優先）
     monthLeave: new Map(Object.entries(input.monthLeaveCounts || {})),
     // 第十次補充決議：崗位優先人選 position_id -> [pt_id...]（rank 小的在前）
@@ -596,9 +597,15 @@ function commitAssignment(ctx, date, slot, position, ptId, priority) {
 //      想要的優先順序（例如資深／年齡）可以再換）
 // ----------------------------------------------------------------------------
 
+// 人員名單的排班順序（2026-11-18）排在所有規則最前面
+const ORDER_RANK = { 優先: 0, 一般: 1, 最後: 2 };
+const orderRank = (s) => ORDER_RANK[s && s.schedule_order] ?? ORDER_RANK.一般;
+
 function rankCandidates(candidateIds, ctx, groupPositionIds) {
-  const highGroup = (id) => (ctx.activeStaff.find((s) => s.id === id)?.saturday_group === "多" ? 0 : 1);
+  const staffOf = (id) => ctx.activeStaff.find((s) => s.id === id);
+  const highGroup = (id) => (staffOf(id)?.saturday_group === "多" ? 0 : 1);
   return [...candidateIds].sort((a, b) => {
+    if (orderRank(staffOf(a)) !== orderRank(staffOf(b))) return orderRank(staffOf(a)) - orderRank(staffOf(b));
     if (highGroup(a) !== highGroup(b)) return highGroup(a) - highGroup(b);
 
     const l3a = countLevel3(a, ctx.abilities, groupPositionIds);
@@ -637,9 +644,12 @@ function ptMaxDaysFor(weekStart, specialDates) {
 }
 
 // 週六「多」組的 PT（會的崗位多）不受連假週減少影響，最多都可以排 4 天（2026-10-25 補充決議）
+// 可上班範圍登記頁設的「本週最多天數」只會往下調（2026-11-18）；車趟的人天天上班，不受影響
 function ptCap(ctx, staffRow) {
   if (staffRow.id === ctx.dailyDriverId) return ctx.openWeekdays;
-  return staffRow.saturday_group === "多" ? PT_MAX_DAYS : ctx.ptMaxDays;
+  const rule = staffRow.saturday_group === "多" ? PT_MAX_DAYS : ctx.ptMaxDays;
+  const limit = ctx.weeklyDayLimits.get(staffRow.id);
+  return limit ? Math.min(rule, limit) : rule;
 }
 
 function isUnderWeeklyCap(ptId, staffRow, ctx, date) {
@@ -1992,8 +2002,10 @@ function planPtDaysOff(ctx, weekdays, rotation) {
     const s = waiting
       .filter((x) => flexibleDays(x).includes(d))
       // 「多」組最後才休；會的崗位少、這個月請假多的人先休，天數留給會的多、配合度高的人（2026-10-25 補充決議）
+      // 排班順序「最後」的先休（2026-11-18）
       .sort(
         (a, b) =>
+          orderRank(b) - orderRank(a) ||
           Number(b.saturday_group !== "多") - Number(a.saturday_group !== "多") ||
           countLevel3(a.id, ctx.abilities, ctx.shippingPositionIds) - countLevel3(b.id, ctx.abilities, ctx.shippingPositionIds) ||
           (ctx.monthLeave.get(b.id) || 0) - (ctx.monthLeave.get(a.id) || 0) ||
@@ -2432,55 +2444,154 @@ const HALF_OF_SHIPPING_SLOT = { 上午出訂單後: "上午", 下午出訂單後
 const RANGE_HALVES = { 全天: ["上午", "下午"], 只上午: ["上午"], 只下午: ["下午"], 全天休假: [] };
 const HALF_SLOTS = { 上午: MORNING_SLOTS, 下午: [...AFTERNOON_SLOTS, "出貨完成後"] };
 const morningSupportPt = (s) => s.employment_type === "PT" && s.primary_group === GROUP_INBOUND && !s.skip_priority_shipping_support;
+// 控制人力成本（2026-11-18 Cynthia 決議）：PT 半天整個沒有工作也休那半天；人多時盡量砍整天——每次挑一位有休半天的人
+// 試著整天休假再重排，缺人、任務提醒沒有新增或變嚴重才照這樣排。排班順序「最後」的先試、本週天數多的先試，
+// 每人每週至少留 1 天；週六、車趟、那天有手動格子的不動
+const PROBLEM_TYPES = ["shortage", "task", "manual"];
+const MAX_DAY_OFF_TRIALS = 40;
 
 function generateWeekSchedule(input) {
-  const halvesOff = new Map(); // ptId|date -> Set("上午"|"下午")
   const staffById = new Map(input.staff.map((s) => [s.id, s]));
   const groupById = new Map(input.positions.map((p) => [p.id, p.group]));
-  const runOnce = () => {
-    const availability = input.availability.filter((a) => !halvesOff.has(`${a.pt_id}|${a.date}`));
-    for (const [key, off] of halvesOff) {
-      const [pt_id, date] = key.split("|");
-      const registered = input.availability.find((a) => a.pt_id === pt_id && a.date === date);
-      const left = RANGE_HALVES[registered ? registered.range : "全天"].filter((h) => !off.has(h));
-      availability.push({ pt_id, date, range: left.length === 2 ? "全天" : left.length === 1 ? `只${left[0]}` : "全天休假" });
-    }
-    return generateWeekScheduleOnce({ ...input, availability });
+  const usable = input.positions.filter((p) => p.is_active !== false && p.included_in_auto_schedule !== false);
+  const shippingIds = usable.filter((p) => p.group === GROUP_SHIPPING).map((p) => p.id);
+  const driverId = findDailyDriverId(usable, input.staff.filter((s) => s.is_active), input.abilities, input);
+  const leanPt = (s) => !!s && s.employment_type === "PT" && s.auto_schedule_weekdays !== false && s.id !== driverId;
+  const registeredHalves = (ptId, date) => {
+    const registered = input.availability.find((a) => a.pt_id === ptId && a.date === date);
+    return RANGE_HALVES[registered ? registered.range : "全天"];
   };
-  let result = runOnce();
-  for (let round = 0; round < 10; round++) {
-    let added = false;
-    for (const r of result.schedule) {
-      const half = HALF_OF_SHIPPING_SLOT[r.slot];
-      const staffRow = staffById.get(r.pt_id);
-      if (!half || r.source !== "auto" || r.priority !== 1 || !staffRow || groupById.get(r.position_id) !== GROUP_INBOUND) continue;
-      if (staffRow.primary_group !== GROUP_SHIPPING && !(morningSupportPt(staffRow) && r.slot === INBOUND_SUPPORT_SLOT && !isSaturday(r.date))) continue;
-      const manualHere = result.schedule.some((x) => x.date === r.date && x.pt_id === r.pt_id && x.source !== "auto" && HALF_SLOTS[half].includes(x.slot));
-      if (manualHere) continue;
-      const key = `${r.pt_id}|${r.date}`;
-      if (!halvesOff.has(key)) halvesOff.set(key, new Set());
-      if (!halvesOff.get(key).has(half)) {
+
+  // 照目前的整天休假（daysOff）排一次，再把多出來的半天改成休假重排，直到沒有閒置的半天
+  const lean = (daysOff) => {
+    const halvesOff = new Map(); // ptId|date -> Set("上午"|"下午")
+    const idleHalf = new Set(); // ptId|date：至少有一個半天是「整個沒有工作」才休的
+    const runOnce = () => {
+      const changed = new Set([...halvesOff.keys(), ...daysOff]);
+      const availability = input.availability.filter((a) => !changed.has(`${a.pt_id}|${a.date}`));
+      for (const key of changed) {
+        const [pt_id, date] = key.split("|");
+        const left = daysOff.has(key) ? [] : registeredHalves(pt_id, date).filter((h) => !halvesOff.get(key).has(h));
+        availability.push({ pt_id, date, range: left.length === 2 ? "全天" : left.length === 1 ? `只${left[0]}` : "全天休假" });
+      }
+      return generateWeekScheduleOnce({ ...input, availability });
+    };
+    let result = runOnce();
+    for (let round = 0; round < 10; round++) {
+      let added = false;
+      const manualIn = (ptId, date, half) =>
+        result.schedule.some((x) => x.date === date && x.pt_id === ptId && x.source !== "auto" && HALF_SLOTS[half].includes(x.slot));
+      const addHalf = (ptId, date, half) => {
+        const key = `${ptId}|${date}`;
+        if (!halvesOff.has(key)) halvesOff.set(key, new Set());
+        if (halvesOff.get(key).has(half)) return false;
         halvesOff.get(key).add(half);
         added = true;
+        return true;
+      };
+      for (const r of result.schedule) {
+        const half = HALF_OF_SHIPPING_SLOT[r.slot];
+        const staffRow = staffById.get(r.pt_id);
+        if (!half || r.source !== "auto" || r.priority !== 1 || !staffRow || groupById.get(r.position_id) !== GROUP_INBOUND) continue;
+        if (staffRow.primary_group !== GROUP_SHIPPING && !(morningSupportPt(staffRow) && r.slot === INBOUND_SUPPORT_SLOT && !isSaturday(r.date))) continue;
+        if (manualIn(r.pt_id, r.date, half)) continue;
+        addHalf(r.pt_id, r.date, half);
       }
+      const workDays = new Set(result.schedule.filter((r) => r.priority === 1).map((r) => `${r.pt_id}|${r.date}`));
+      for (const key of workDays) {
+        const [ptId, date] = key.split("|");
+        if (isSaturday(date) || !leanPt(staffById.get(ptId))) continue;
+        for (const half of registeredHalves(ptId, date)) {
+          if (halvesOff.get(key)?.has(half)) continue;
+          const busy = result.schedule.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1 && HALF_SLOTS[half].includes(r.slot));
+          if (!busy && !manualIn(ptId, date, half) && addHalf(ptId, date, half)) idleHalf.add(key);
+        }
+      }
+      if (!added) break;
+      result = runOnce();
     }
-    if (!added) break;
-    result = runOnce();
+    return { result, halvesOff, idleHalf };
+  };
+
+  const daysOff = new Set();
+  let best = lean(daysOff);
+  // 「每天至少一位進貨組 PT 做進貨」只在 checkWeekSchedule 檢查，這裡自己算：有進貨組 PT 做進貨、而且不是上午下午都在出貨的日子
+  const inboundCovered = (res) => {
+    const rows = res.schedule.filter((r) => r.priority === 1 && staffById.get(r.pt_id)?.employment_type === "PT" && staffById.get(r.pt_id).primary_group === GROUP_INBOUND);
+    const shipsIn = (ptId, date, slots) => rows.some((r) => r.pt_id === ptId && r.date === date && slots.includes(r.slot) && groupById.get(r.position_id) === GROUP_SHIPPING);
+    return rows
+      .filter((r) => groupById.get(r.position_id) === GROUP_INBOUND && !(shipsIn(r.pt_id, r.date, MORNING_SLOTS) && shipsIn(r.pt_id, r.date, AFTERNOON_SLOTS)))
+      .map((r) => `進貨組 PT 做進貨|${r.date}`);
+  };
+  const ptHalves = (res) =>
+    new Set(
+      res.schedule
+        .filter((r) => r.priority === 1 && staffById.get(r.pt_id)?.employment_type === "PT")
+        .map((r) => `${r.pt_id}|${r.date}|${HALF_SLOTS.上午.includes(r.slot) ? "上午" : "下午"}`)
+    ).size;
+  const problems = (res) => {
+    const covered = new Set(inboundCovered(res));
+    const missing = getWeekDates(input.weekStart).slice(0, 5).filter((d) => !covered.has(`進貨組 PT 做進貨|${d}`)).map((d) => `沒有進貨組 PT 做進貨|${d}`);
+    return new Set([...res.warnings.filter((w) => PROBLEM_TYPES.includes(w.type)).map((w) => w.message), ...missing]);
+  };
+  const tried = new Set();
+  for (let trials = 0; trials < MAX_DAY_OFF_TRIALS; trials++) {
+    const rows = best.result.schedule.filter((r) => r.priority === 1);
+    const daysWorked = (ptId) => new Set(rows.filter((r) => r.pt_id === ptId).map((r) => r.date)).size;
+    const candidates = [...best.halvesOff]
+      .map(([key, off]) => ({ key, ptId: key.split("|")[0], date: key.split("|")[1], slack: off.size }))
+      .filter(({ key, ptId, date }) => {
+        if (tried.has(key) || isSaturday(date) || !leanPt(staffById.get(ptId)) || daysWorked(ptId) < 2) return false;
+        const today = best.result.schedule.filter((r) => r.date === date && r.pt_id === ptId);
+        return today.some((r) => r.priority === 1) && today.every((r) => r.source === "auto");
+      })
+      .sort((a, b) => {
+        const sa = staffById.get(a.ptId);
+        const sb = staffById.get(b.ptId);
+        return (
+          orderRank(sb) - orderRank(sa) ||
+          daysWorked(b.ptId) - daysWorked(a.ptId) ||
+          b.slack - a.slack ||
+          countLevel3(a.ptId, input.abilities, shippingIds) - countLevel3(b.ptId, input.abilities, shippingIds) ||
+          sa.name.localeCompare(sb.name, "zh-Hant") ||
+          (a.date < b.date ? -1 : 1)
+        );
+      });
+    if (candidates.length === 0) break;
+    const { key } = candidates[0];
+    tried.add(key);
+    const attempt = lean(new Set([...daysOff, key]));
+    const before = problems(best.result);
+    // 只是把這天換給別人上（總半天數沒少）不算省到人力
+    if (ptHalves(attempt.result) < ptHalves(best.result) && [...problems(attempt.result)].every((m) => before.has(m))) {
+      daysOff.add(key);
+      best = attempt;
+    }
   }
-  for (const [key, off] of halvesOff) {
+
+  const { result, halvesOff, idleHalf } = best;
+  const dayLabel = (ptId, date) => `${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${staffById.get(ptId).name}`;
+  for (const key of daysOff) {
     const [ptId, date] = key.split("|");
-    const worksToday = result.schedule.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1);
-    const staffRow = staffById.get(ptId);
-    const day = `${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${staffRow.name}`;
-    const what = !worksToday ? "整天出貨都排滿了，系統安排這天休假" : `${[...off].join("、")}出貨已經排滿，系統安排${[...off].join("、")}休假`;
+    const why = orderRank(staffById.get(ptId)) === ORDER_RANK.最後 ? "（排班順序：最後才排）" : "";
     result.warnings.push({
       type: "day_off",
       date,
       ptId,
-      message: morningSupportPt(staffRow)
-        ? `人力精實：${day} 上午出貨已經由出貨組排滿，不用進貨組支援，系統安排上午休假、下午做進貨，可以自己調整`
-        : `人力精實：${day} ${what}（出貨組不排去做進貨），可以自己調整`,
+      message: `人力精實：${dayLabel(ptId, date)} 這天人力有多，其他人排得下，系統安排這天休假${why}，可以自己調整`,
     });
+  }
+  for (const [key, off] of halvesOff) {
+    if (daysOff.has(key)) continue;
+    const [ptId, date] = key.split("|");
+    const staffRow = staffById.get(ptId);
+    const halves = [...off].join("、");
+    const worksToday = result.schedule.some((r) => r.date === date && r.pt_id === ptId && r.priority === 1);
+    let message;
+    if (idleHalf.has(key)) message = worksToday ? `${halves}沒有排到工作，系統安排${halves}休假` : "沒有排到工作，系統安排這天休假";
+    else if (morningSupportPt(staffRow)) message = "上午出貨已經由出貨組排滿，不用進貨組支援，系統安排上午休假、下午做進貨";
+    else message = `${!worksToday ? "整天出貨都排滿了，系統安排這天休假" : `${halves}出貨已經排滿，系統安排${halves}休假`}（出貨組不排去做進貨）`;
+    result.warnings.push({ type: "day_off", date, ptId, message: `人力精實：${dayLabel(ptId, date)} ${message}，可以自己調整` });
   }
   return result;
 }

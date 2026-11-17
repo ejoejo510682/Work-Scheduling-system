@@ -8,6 +8,18 @@ const SATURDAY_LOOKBACK_WEEKS = 8;
 // 連假、檔期順延要往回看的天數（演算法最多往回找 60 天）
 const SPECIAL_DATES_LOOKBACK_DAYS = 60;
 
+// 每個人最近一次的設定（資料已照 week_start 由新到舊排）；max_days 為 null＝回到系統規則
+export function latestDayLimits(rows: { pt_id: string; max_days: number | null }[]) {
+  const seen = new Set<string>();
+  const limits: Record<string, number> = {};
+  for (const r of rows) {
+    if (seen.has(r.pt_id)) continue;
+    seen.add(r.pt_id);
+    if (r.max_days != null) limits[r.pt_id] = r.max_days;
+  }
+  return limits;
+}
+
 // 把排班演算法需要的資料一次讀好，整理成 generateWeekSchedule 的輸入格式。
 // ignoreExisting＝true 時不讀這週已經排的班（比對過去班表用：讓系統從空白重排一次）
 export async function loadAutoScheduleInput(
@@ -34,6 +46,7 @@ export async function loadAutoScheduleInput(
     { data: templates },
     { data: requests },
     { data: monthLeave },
+    { data: dayLimits },
   ] = await Promise.all([
     supabase
       .from("positions")
@@ -42,7 +55,7 @@ export async function loadAutoScheduleInput(
     supabase
       .from("pt_staff")
       .select(
-        "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer, shipping_support_position_id, skip_priority_shipping_support",
+        "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer, shipping_support_position_id, skip_priority_shipping_support, schedule_order",
       ),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
     supabase.from("position_headcount").select("position_id, slot, headcount, monday_headcount, priority_headcount"),
@@ -80,6 +93,12 @@ export async function loadAutoScheduleInput(
       .eq("range", "全天休假")
       .gte("date", monthStart)
       .lte("date", addDays(addDays(monthStart, 31).slice(0, 7) + "-01", -1)),
+    // 每週最多天數：沒設的週沿用最近一次設定（2026-11-18）
+    supabase
+      .from("pt_weekly_day_limits")
+      .select("pt_id, week_start, max_days")
+      .lte("week_start", monday)
+      .order("week_start", { ascending: false }),
   ]);
 
   if (positionsError) throw new Error(`讀取崗位失敗：${positionsError.message}`);
@@ -114,6 +133,7 @@ export async function loadAutoScheduleInput(
       pt_ids: (r.task_request_staff as { pt_id: string }[]).map((s) => s.pt_id),
     })),
     weekdayFtPrinterId: printer?.id ?? null,
+    weeklyDayLimits: latestDayLimits(dayLimits ?? []),
     monthLeaveCounts: (monthLeave ?? []).reduce<Record<string, number>>((counts, r) => {
       counts[r.pt_id] = (counts[r.pt_id] ?? 0) + 1;
       return counts;
