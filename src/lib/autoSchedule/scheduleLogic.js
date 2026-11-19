@@ -777,9 +777,10 @@ function fillPosition(ctx, date, slot, position, target, candidatePool, groupPos
 // 計算某崗位在某時段/當天的目標需求人數（基準人數 + 出貨優先日加人 + 平日保底/分攤規則）
 // 這個函式只算「理論目標」，實際填不填得滿要看有沒有人；詳細的平均分攤邏輯在
 // assignSlot 裡面，因為分攤需要知道「剩餘人力夠不夠兩邊都滿足」才能決定怎麼砍。
-// 人數照崗位管理的設定：週一有填就用週一的人數，出貨優先日有填就用出貨優先日的人數（兩個都符合取較多的），
+// 人數照崗位管理的設定：週一到週五當天有填就用當天的人數（2026-11-19），出貨優先日有填就用出貨優先日的人數（兩個都符合取較多的），
 // 最後一律被 max_headcount（同時段上限，含備援）鉏住。
 const SECOND_DAY_NO_EXTRA = ["無包裝出貨", "出箱貨"];
+const WEEKDAY_HEADCOUNT_COLUMNS = ["monday_headcount", "tuesday_headcount", "wednesday_headcount", "thursday_headcount", "friday_headcount"];
 
 function headcountRow(ctx, positionId, slot) {
   return ctx.headcountRows.get(`${positionId}|${slot || ""}`) || ctx.headcountRows.get(`${positionId}|`) || null;
@@ -795,11 +796,11 @@ function normalHeadcount(ctx, positionId, slot) {
 function baseTarget(position, ctx, isPriority, extraHeadcount, date, slot) {
   const row = headcountRow(ctx, position.id, slot);
   if (!row) return 0;
-  const isMonday = !!date && getWeekdayIndex(date) === 0;
-  const base = isMonday && row.monday_headcount != null ? row.monday_headcount : row.headcount;
+  const dayColumn = date ? WEEKDAY_HEADCOUNT_COLUMNS[getWeekdayIndex(date)] : null;
+  const base = dayColumn && row[dayColumn] != null ? row[dayColumn] : row.headcount;
   let target = base;
-  // 出貨優先日照設定的人數（週一又是出貨優先日時取較多的）；第十六、十七次補充決議：
-  // 連假後第 2 個出貨優先日（沒有其他理由時）無包裝出貨、出箱貨不加人，維持平常／週一的人數
+  // 出貨優先日照設定的人數（當天又是出貨優先日時取較多的）；第十六、十七次補充決議：
+  // 連假後第 2 個出貨優先日（沒有其他理由時）無包裝出貨、出箱貨不加人，維持平常／當天的人數
   const secondDayOnly =
     SECOND_DAY_NO_EXTRA.includes(position.name) && !!date && !isPriorityShippingDay(date, ctx.specialDates).fullExtra;
   if (isPriority && row.priority_headcount != null && !secondDayOnly) target = Math.max(base, row.priority_headcount);

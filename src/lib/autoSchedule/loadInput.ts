@@ -58,7 +58,9 @@ export async function loadAutoScheduleInput(
         "id, name, is_active, employment_type, primary_group, gender, can_work_saturday, saturday_group, auto_schedule_weekdays, is_weekday_printer, shipping_support_position_id, skip_priority_shipping_support, schedule_order",
       ),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
-    supabase.from("position_headcount").select("position_id, slot, headcount, monday_headcount, priority_headcount"),
+    supabase.from("position_headcount").select(
+      "position_id, slot, headcount, monday_headcount, tuesday_headcount, wednesday_headcount, thursday_headcount, friday_headcount, priority_headcount",
+    ),
     supabase.from("position_slot_map").select("position_id, slot"),
     supabase.from("pt_daily_availability").select("pt_id, date, range").gte("date", monday).lte("date", sunday),
     supabase

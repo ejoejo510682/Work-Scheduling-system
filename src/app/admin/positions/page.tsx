@@ -16,7 +16,9 @@ export default async function PositionsPage() {
         .order("sort_order"),
       supabase
         .from("position_headcount")
-        .select("id, position_id, slot, headcount, monday_headcount, priority_headcount"),
+        .select(
+          "id, position_id, slot, headcount, monday_headcount, tuesday_headcount, wednesday_headcount, thursday_headcount, friday_headcount, priority_headcount",
+        ),
       supabase.from("position_slot_map").select("position_id, slot"),
       supabase.from("position_preferred_staff").select("position_id, pt_id, rank").order("rank"),
       supabase.from("pt_staff").select("id, name, employment_type, gender").eq("is_active", true).order("name"),

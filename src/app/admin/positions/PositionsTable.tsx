@@ -23,6 +23,10 @@ type Headcount = {
   slot: string | null;
   headcount: number;
   monday_headcount: number | null;
+  tuesday_headcount: number | null;
+  wednesday_headcount: number | null;
+  thursday_headcount: number | null;
+  friday_headcount: number | null;
   priority_headcount: number | null;
 };
 type SlotMapRow = { position_id: string; slot: string };
@@ -30,7 +34,15 @@ type PreferredRow = { position_id: string; pt_id: string; rank: number };
 type Staff = { id: string; name: string; employment_type: EmploymentType; gender: Gender };
 
 // 編輯中的人數用字串存，空白代表「跟平常一樣」
-type HeadcountDraft = { slot: string | null; headcount: string; monday: string; priority: string };
+type HeadcountDraft = { slot: string | null; headcount: string; days: string[]; priority: string };
+
+const WEEKDAY_COLUMNS = [
+  { key: "monday_headcount", label: "週一" },
+  { key: "tuesday_headcount", label: "週二" },
+  { key: "wednesday_headcount", label: "週三" },
+  { key: "thursday_headcount", label: "週四" },
+  { key: "friday_headcount", label: "週五" },
+] as const;
 type AutoDraft = {
   included: boolean;
   fillFirst: boolean;
@@ -228,7 +240,7 @@ export function PositionsTable({
       headcountRowsFor(position.id).map(({ slot, row }) => ({
         slot,
         headcount: String(row?.headcount ?? 1),
-        monday: row?.monday_headcount == null ? "" : String(row.monday_headcount),
+        days: WEEKDAY_COLUMNS.map(({ key }) => (row?.[key] == null ? "" : String(row[key]))),
         priority: row?.priority_headcount == null ? "" : String(row.priority_headcount),
       })),
     );
@@ -241,7 +253,7 @@ export function PositionsTable({
   }
 
   async function saveHeadcount(position: Position) {
-    const numbers = headcountDrafts.flatMap((d) => [Number(d.headcount), optionalCount(d.monday), optionalCount(d.priority)]);
+    const numbers = headcountDrafts.flatMap((d) => [Number(d.headcount), ...d.days.map(optionalCount), optionalCount(d.priority)]);
     if (headcountDrafts.some((d) => d.headcount.trim() === "") || numbers.some((n) => n !== null && !(n >= 1))) {
       setHeadcountError("人數至少要 1 人");
       return;
@@ -260,7 +272,7 @@ export function PositionsTable({
       ...headcountDrafts.map((d, i) => {
         const values = {
           headcount: Number(d.headcount),
-          monday_headcount: optionalCount(d.monday),
+          ...Object.fromEntries(WEEKDAY_COLUMNS.map(({ key }, j) => [key, optionalCount(d.days[j])])),
           priority_headcount: optionalCount(d.priority),
         };
         const row = existing[i]?.row;
@@ -330,7 +342,7 @@ export function PositionsTable({
     const template = rows[0];
     const copy = {
       headcount: template?.headcount ?? 1,
-      monday_headcount: template?.monday_headcount ?? null,
+      ...Object.fromEntries(WEEKDAY_COLUMNS.map(({ key }) => [key, template?.[key] ?? null])),
       priority_headcount: template?.priority_headcount ?? null,
     };
     const nextSlots: (string | null)[] = editingSlotsValue.length > 0 ? editingSlotsValue : [null];
@@ -482,11 +494,12 @@ export function PositionsTable({
                             <div key={slot ?? "flex"} className="whitespace-nowrap">
                               {slot && <span className="text-xs text-zinc-500 dark:text-zinc-400">{slot}　</span>}
                               {row ? `${row.headcount} 人` : "—"}
-                              {row?.monday_headcount != null && (
-                                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                                  ・週一 {row.monday_headcount}
-                                </span>
-                              )}
+                              {row &&
+                                WEEKDAY_COLUMNS.filter(({ key }) => row[key] != null).map(({ key, label }) => (
+                                  <span key={key} className="text-xs text-zinc-500 dark:text-zinc-400">
+                                    ・{label} {row[key]}
+                                  </span>
+                                ))}
                               {row?.priority_headcount != null && (
                                 <span className="text-xs text-sky-700 dark:text-sky-400">
                                   ・出貨優先日 {row.priority_headcount}
@@ -590,57 +603,69 @@ export function PositionsTable({
                       <td colSpan={6} className="px-3 py-3">
                         <div className="space-y-3">
                           <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                            「週一」「出貨優先日」留空代表跟平常一樣。週一剛好也是出貨優先日時，取兩者中較多的人數。
+                            週一到週五、出貨優先日留空代表跟平常一樣；週六照平常的人數。當天剛好也是出貨優先日時，取兩者中較多的人數。
                           </p>
-                          <table className="text-sm">
-                            <thead className="text-left text-xs text-zinc-500 dark:text-zinc-400">
-                              <tr>
-                                <th className="pr-4 font-normal">時段</th>
-                                <th className="pr-4 font-normal">平常</th>
-                                <th className="pr-4 font-normal">週一</th>
-                                <th className="pr-4 font-normal">出貨優先日</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {headcountDrafts.map((d, i) => (
-                                <tr key={d.slot ?? "flex"}>
-                                  <td className="py-1 pr-4 text-zinc-700 dark:text-zinc-300">{d.slot ?? "彈性"}</td>
-                                  <td className="py-1 pr-4">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      value={d.headcount}
-                                      onChange={(e) => updateHeadcountDraft(i, { headcount: e.target.value })}
-                                      className={inputClass}
-                                      aria-label={`${d.slot ?? "彈性"}平常人數`}
-                                    />
-                                  </td>
-                                  <td className="py-1 pr-4">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      value={d.monday}
-                                      placeholder="同平常"
-                                      onChange={(e) => updateHeadcountDraft(i, { monday: e.target.value })}
-                                      className={`${inputClass} w-20`}
-                                      aria-label={`${d.slot ?? "彈性"}週一人數`}
-                                    />
-                                  </td>
-                                  <td className="py-1 pr-4">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      value={d.priority}
-                                      placeholder="同平常"
-                                      onChange={(e) => updateHeadcountDraft(i, { priority: e.target.value })}
-                                      className={`${inputClass} w-20`}
-                                      aria-label={`${d.slot ?? "彈性"}出貨優先日人數`}
-                                    />
-                                  </td>
+                          <div className="overflow-x-auto">
+                            <table className="text-sm">
+                              <thead className="text-left text-xs text-zinc-500 dark:text-zinc-400">
+                                <tr>
+                                  <th className="pr-4 font-normal">時段</th>
+                                  <th className="pr-4 font-normal">平常</th>
+                                  {WEEKDAY_COLUMNS.map(({ key, label }) => (
+                                    <th key={key} className="pr-2 font-normal">
+                                      {label}
+                                    </th>
+                                  ))}
+                                  <th className="pr-4 font-normal">出貨優先日</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {headcountDrafts.map((d, i) => (
+                                  <tr key={d.slot ?? "flex"}>
+                                    <td className="py-1 pr-4 text-zinc-700 dark:text-zinc-300">{d.slot ?? "彈性"}</td>
+                                    <td className="py-1 pr-4">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={d.headcount}
+                                        onChange={(e) => updateHeadcountDraft(i, { headcount: e.target.value })}
+                                        className={inputClass}
+                                        aria-label={`${d.slot ?? "彈性"}平常人數`}
+                                      />
+                                    </td>
+                                    {WEEKDAY_COLUMNS.map(({ key, label }, j) => (
+                                      <td key={key} className="py-1 pr-2">
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          value={d.days[j]}
+                                          placeholder="同平常"
+                                          onChange={(e) =>
+                                            updateHeadcountDraft(i, {
+                                              days: d.days.map((v, k) => (k === j ? e.target.value : v)),
+                                            })
+                                          }
+                                          className={`${inputClass} w-20`}
+                                          aria-label={`${d.slot ?? "彈性"}${label}人數`}
+                                        />
+                                      </td>
+                                    ))}
+                                    <td className="py-1 pr-4">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={d.priority}
+                                        placeholder="同平常"
+                                        onChange={(e) => updateHeadcountDraft(i, { priority: e.target.value })}
+                                        className={`${inputClass} w-20`}
+                                        aria-label={`${d.slot ?? "彈性"}出貨優先日人數`}
+                                      />
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                           <label className="flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
                             同一時段最多
                             <input
