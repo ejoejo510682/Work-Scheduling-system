@@ -2191,6 +2191,8 @@ function planPreferredPositions(ctx, weekdays) {
         need.set(`${d}|${sl}`, Math.max(0, target - currentPriorityCount(ctx, d, sl, positionId)));
       }
     }
+    // 車趟的人在車趟的時段固定跑車趟（2026-11-19），不先規劃進別的崗位
+    const driverSlots = position.name === DAILY_POSITION_NAME ? [] : ctx.slotsForPosition.get(ctx.positions.find((p) => p.name === DAILY_POSITION_NAME)?.id) || [];
     const coverableSlots = (s, d) => {
       const isPriority = isPriorityShippingDay(d, ctx.specialDates).isPriority;
       if (position.group === GROUP_SHIPPING && s.primary_group !== GROUP_SHIPPING && !isPriority) return [];
@@ -2198,6 +2200,7 @@ function planPreferredPositions(ctx, weekdays) {
       return slots.filter(
         (sl) =>
           need.get(`${d}|${sl}`) > 0 &&
+          !(s.id === ctx.dailyDriverId && driverSlots.includes(sl)) &&
           inboundSupportSlotOk(s, position, sl) &&
           !hasBackupHere(ctx, d, sl, s.id, positionId) &&
           isAvailableForSlotToday(s.id, d, sl, ctx) &&
