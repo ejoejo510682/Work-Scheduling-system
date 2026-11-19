@@ -734,10 +734,10 @@ function fillPosition(ctx, date, slot, position, target, candidatePool, groupPos
   // 第十次補充決議：這個崗位有設優先人選的話，候選池裡的優先人選照 rank 排在最前面，
   // 其他人再照一般挑人順序（能力、性別、可上班、4 天上限等條件，候選池跟下面的能力檢查已經處理）
   const preferred = (ctx.preferredByPosition.get(position.id) || []).filter((id) => remainingPool.includes(id));
-  const ranked = [
-    ...preferred,
-    ...rotateByPosition(ctx, position.id, rankCandidates(remainingPool.filter((id) => !preferred.includes(id)), ctx, groupPositionIdsForRanking)),
-  ];
+  const rotated = rotateByPosition(ctx, position.id, rankCandidates(remainingPool.filter((id) => !preferred.includes(id)), ctx, groupPositionIdsForRanking));
+  // 正職當主力（2026-11-19）：正職本來就整天上班，位子不夠時正職先排，PT 排不到的半天交給人力精實放假
+  const isFullTime = (id) => ctx.activeStaff.find((s) => s.id === id)?.employment_type === "正職";
+  const ranked = [...preferred, ...rotated.filter(isFullTime), ...rotated.filter((id) => !isFullTime(id))];
 
   let added = 0;
   // 第一輪：三級的人（target 已經在 baseTarget 裡鉏過 max_headcount，這裡的
@@ -1127,6 +1127,37 @@ function assignBackups(ctx, date, slot) {
       if (!hasCapacity(ctx, date, slot, backupPosition)) break;
       if (hasLevel3InBackup()) commitAssignment(ctx, date, slot, backupPosition, ptId, 2);
     }
+  }
+
+  assignNoPackBackups(ctx, date, slot, primariesThisSlot);
+}
+
+// 平日下午無包裝出貨的人都排備援（2026-11-19）：撿貨、包裝哪邊人少（第一任務＋備援）放哪邊，一樣多放撿貨。
+// 撿貨的人備援包裝已經先排了，所以通常會落在撿貨
+const NO_PACK_BACKUP_CHOICES = ["撿貨", "包裝"];
+function assignNoPackBackups(ctx, date, slot, primariesThisSlot) {
+  const noPack = ctx.positions.find((p) => p.name === "無包裝出貨");
+  const choices = NO_PACK_BACKUP_CHOICES.map((n) => ctx.positions.find((p) => p.name === n)).filter(
+    (p) => p && (ctx.slotsForPosition.get(p.id) || []).includes(slot)
+  );
+  if (!noPack || choices.length === 0) return;
+  const ptIds = primariesThisSlot
+    .filter((r) => r.position_id === noPack.id)
+    .map((r) => r.pt_id)
+    .filter((id) => autoScheduleOk(ctx.activeStaff.find((s) => s.id === id), date));
+  const rowsIn = (p) => ctx.scheduleRows.filter((r) => r.date === date && r.slot === slot && r.position_id === p.id);
+  const ranked = rankCandidates(ptIds, ctx, ctx.shippingPositionIds);
+  const bestLevel = (id) => Math.max(...choices.map((p) => getLevel(id, p.id, ctx.abilities)));
+  for (const ptId of [...ranked.filter((id) => bestLevel(id) === 3), ...ranked.filter((id) => bestLevel(id) !== 3)]) {
+    if (ctx.scheduleRows.some((r) => r.date === date && r.slot === slot && r.pt_id === ptId && r.priority === 2)) continue;
+    const options = choices
+      .filter((p) => {
+        const level = getLevel(ptId, p.id, ctx.abilities);
+        if (!positionAllowedById(ctx, ptId, p) || !hasCapacity(ctx, date, slot, p)) return false;
+        return level === 3 || (level === 2 && rowsIn(p).some((r) => getLevel(r.pt_id, p.id, ctx.abilities) === 3));
+      })
+      .sort((a, b) => rowsIn(a).length - rowsIn(b).length);
+    if (options.length > 0) commitAssignment(ctx, date, slot, options[0], ptId, 2);
   }
 }
 
