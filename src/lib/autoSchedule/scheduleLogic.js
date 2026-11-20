@@ -2207,7 +2207,7 @@ function validateFullTimeDays(ctx, weekDates) {
 // 優先人選都排不了的日子，留給平日一般流程照一般挑人順序補（崗位內仍是優先人選先挑）。
 // ----------------------------------------------------------------------------
 
-function planPreferredPositions(ctx, weekdays) {
+function planPreferredPositions(ctx, weekdays, rotation) {
   for (const [positionId, prefIds] of ctx.preferredByPosition) {
     const position = ctx.positionById.get(positionId);
     if (!position) continue; // 不納入自動排班的崗位不規劃
@@ -2239,14 +2239,16 @@ function planPreferredPositions(ctx, weekdays) {
       );
     };
     const booked = (s, d) => (ctx.lockedDaysByPt.get(s.id) || new Set()).has(d);
+    // 輪到他印單的日子一定會上班：不另外佔天數，也要先替那幾天留好天數（2026-11-20：被排去出箱貨把印單日的天數用掉）
+    const printing = (s, d) => rotation.assignments.get(d) === s.id && !booked(s, d) && !onLeave(ctx, s.id, d);
 
     people.forEach((s, idx) => {
       const lowerRanked = people.slice(idx + 1);
       const days = weekdays
         .filter((d) => coverableSlots(s, d).length > 0)
-        .map((d) => ({ d, others: lowerRanked.filter((o) => coverableSlots(o, d).length > 0).length, free: booked(s, d) }))
+        .map((d) => ({ d, others: lowerRanked.filter((o) => coverableSlots(o, d).length > 0).length, free: booked(s, d) || printing(s, d) }))
         .sort((a, b) => (b.free ? 1 : 0) - (a.free ? 1 : 0) || a.others - b.others || (a.d < b.d ? -1 : 1));
-      let capacity = s.employment_type === "PT" ? ptCap(ctx, s) - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) : Infinity;
+      let capacity = s.employment_type === "PT" ? ptCap(ctx, s) - (ctx.ptDaysUsedThisWeek.get(s.id) || 0) - weekdays.filter((d) => printing(s, d)).length : Infinity;
       for (const { d, free } of days) {
         if (!free && capacity <= 0) continue;
         const toFill = coverableSlots(s, d);
@@ -2408,7 +2410,20 @@ function processRequestsForDay(ctx, date) {
     for (const id of named) {
       const person = ctx.activeStaff.find((s) => s.id === id);
       const name = person ? person.name : id;
+      // 已經先保留給任務、或手動排在這個任務（含備援）
+      if (ctx.scheduleRows.some((r) => r.date === date && r.slot === req.slot && r.pt_id === id && r.position_id === position.id)) {
+        log.placed.push(id);
+        continue;
+      }
       const current = ctx.scheduleRows.find((r) => r.date === date && r.slot === req.slot && r.pt_id === id && r.priority === 1);
+      const driverBackup = ctx.scheduleRows.find((r) => r.date === date && r.slot === req.slot && r.pt_id === id && r.priority === 2);
+      if (current && id === ctx.dailyDriverId && current.position_name === DAILY_POSITION_NAME && (!driverBackup || driverBackup.source === "auto")) {
+        // 車趟的人那個時段固定跑車趟，任務排成備援（跟 Cynthia 11/23 手動排的一樣），系統排的其他備援讓給任務
+        if (driverBackup) ctx.scheduleRows.splice(ctx.scheduleRows.indexOf(driverBackup), 1);
+        ctx.scheduleRows.push({ ...current, position_id: position.id, position_name: position.name, priority: 2, source: "auto", task: "本週任務" });
+        log.placed.push(id);
+        continue;
+      }
       if (!person || (!current && !freeToAdd(ctx, person, date, req.slot))) {
         notes.push(`${name}請假／沒空`);
         ctx.warnings.push({ type: "task", date, message: `${label}：指定的 ${name} 請假、那個時段沒登記上班或已達本週天數上限，這個位子留空，請手動調整` });
@@ -2450,6 +2465,32 @@ function processRequestsForDay(ctx, date) {
       ctx.warnings.push({ type: "task_manual", date, slot: req.slot, positionId: position.id, message: `${label} 需要安排 ${missing} 人，請手動指定` });
     }
     log.result = [log.placed.length ? `排入 ${log.placed.length} 人` : "", ...notes, missing ? `待手動指定 ${missing} 人` : ""].filter(Boolean).join("；");
+  }
+}
+
+// 本週任務指定的人先保留給任務（2026-11-20 Cynthia 決議）：排出貨之前就放進任務，出貨改用其他人補，
+// 那天也算他已經要上班（跟手動鎖定一樣不會被排休假）。輪到他印單的時段、車趟的人在車趟時段不搶，
+// 照 processRequestsForDay 處理（車趟的人改排任務備援）
+function reserveRequestedTasks(ctx, weekDates, rotation) {
+  const driverSlots = ctx.slotsForPosition.get(ctx.positions.find((p) => p.name === DAILY_POSITION_NAME)?.id) || [];
+  for (const req of ctx.taskRequests) {
+    const { date, slot } = req;
+    const position = ctx.allPositionById.get(req.position_id);
+    if (!position || position.is_active === false || !weekDates.includes(date)) continue;
+    if (isSaturday(date) || isSunday(date) || isHolidayDate(date, ctx.specialDates)) continue;
+    for (const id of requestNamedIds(req)) {
+      const person = ctx.activeStaff.find((s) => s.id === id);
+      if (!person || isAssignedThisSlot(ctx, date, slot, id) || !registeredForSlot(ctx, id, date, slot)) continue;
+      if (rotation.assignments.get(date) === id && ["上午出訂單前", "下午出訂單前"].includes(slot)) continue;
+      if (id === ctx.dailyDriverId && driverSlots.includes(slot)) continue;
+      if (!isUnderWeeklyCap(id, person, ctx, date)) continue;
+      commitTask(ctx, date, slot, position, id, "本週任務");
+      if (!ctx.lockedDaysByPt.has(id)) ctx.lockedDaysByPt.set(id, new Set());
+      if (!ctx.lockedDaysByPt.get(id).has(date)) {
+        ctx.lockedDaysByPt.get(id).add(date);
+        ctx.ptDaysUsedThisWeek.set(id, (ctx.ptDaysUsedThisWeek.get(id) || 0) + 1);
+      }
+    }
   }
 }
 
@@ -2639,6 +2680,7 @@ function generateWeekScheduleOnce(input) {
   // 先放進手動鎖定的格子，後面所有自動排班都在它們「之外」重新計算
   applyLockedRows(ctx, input);
   const rotation = computePrinterRotation(input, ctx);
+  reserveRequestedTasks(ctx, weekDates, rotation);
 
   for (const priorityDate of weekDates.slice(0, 6)) {
     const info = isPriorityShippingDay(priorityDate, ctx.specialDates);
@@ -2681,7 +2723,7 @@ function generateWeekScheduleOnce(input) {
         message: `${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）是國定假日，不排班${isSaturday(date) ? "（這週沒有週六班，週六輪流也不往前推）" : ""}`,
       });
       if (isSaturday(date)) {
-        planPreferredPositions(ctx, workingWeekdays);
+        planPreferredPositions(ctx, workingWeekdays, rotation);
         planInboundPtDays(ctx, workingWeekdays, rotation, input);
         planPtDaysOff(ctx, workingWeekdays, rotation);
       }
@@ -2741,7 +2783,7 @@ function generateWeekScheduleOnce(input) {
     // 最後替上班天數超過上限的 PT 挑好休假日，讓每天人力平均
     if (isSaturday(date)) {
       planFullTimeDaysOff(ctx, workingWeekdays, rotation, date);
-      planPreferredPositions(ctx, workingWeekdays);
+      planPreferredPositions(ctx, workingWeekdays, rotation);
       planInboundPtDays(ctx, workingWeekdays, rotation, input);
       planPtDaysOff(ctx, workingWeekdays, rotation);
     }
@@ -2840,7 +2882,7 @@ function checkTasksForDay(ctx, date) {
     if (!position || position.is_active === false) continue;
     const label = `${taskDayLabel(date)} ${req.slot}「${position.name}」`;
     const placed = ctx.scheduleRows
-      .filter((r) => r.date === date && r.slot === req.slot && r.position_id === position.id && r.priority === 1)
+      .filter((r) => r.date === date && r.slot === req.slot && r.position_id === position.id)
       .map((r) => r.pt_id);
     for (const id of requestNamedIds(req)) {
       if (placed.includes(id)) continue;
