@@ -2147,6 +2147,28 @@ function planInboundPtDays(ctx, weekdays, rotation, input) {
   }
 }
 
+// 排班順序比時數（2026-11-21 Cynthia 決議「不缺人優先，加提醒」）：同一組的 PT，排序後面的人半天數比前面的人多就提醒。
+// 自動排班會先試著對調，換了會缺人才留著（例如前面的人不會做那些崗位）
+function checkScheduleOrder(ctx, weekDates) {
+  const pts = ctx.activeStaff.filter((s) => s.employment_type === "PT" && s.auto_schedule_weekdays !== false && s.id !== ctx.dailyDriverId);
+  const halves = (id) =>
+    new Set(
+      ctx.scheduleRows
+        .filter((r) => r.priority === 1 && r.pt_id === id && weekDates.includes(r.date))
+        .map((r) => `${r.date}|${MORNING_SLOTS.includes(r.slot) ? "上午" : "下午"}`)
+    ).size;
+  const label = (s) => (s.schedule_order === "最後" ? "最後才排" : s.schedule_order || "一般");
+  for (const lo of pts) {
+    const ahead = pts.filter((hi) => hi.primary_group === lo.primary_group && orderRank(hi) < orderRank(lo) && halves(hi.id) < halves(lo.id));
+    if (ahead.length === 0) continue;
+    ctx.warnings.push({
+      type: "order",
+      ptId: lo.id,
+      message: `排班順序：${lo.name}（${label(lo)}）本週 ${halves(lo.id)} 個半天，比 ${ahead.map((hi) => `${hi.name}（${label(hi)}）${halves(hi.id)} 個半天`).join("、")}多`,
+    });
+  }
+}
+
 function checkInboundPtDay(ctx, date) {
   const pts = inboundPts(ctx);
   if (pts.length === 0) return;
@@ -2533,7 +2555,7 @@ const morningSupportPt = (s) => s.employment_type === "PT" && s.primary_group ==
 // 每人每週至少留 1 天；週六、車趟、那天有手動格子的不動
 const PROBLEM_TYPES = ["shortage", "task", "manual"];
 const MAX_DAY_OFF_TRIALS = 40;
-const MAX_SWAP_TRIALS = 12;
+const MAX_SWAP_TRIALS = 40;
 
 function generateWeekSchedule(input) {
   const staffById = new Map(input.staff.map((s) => [s.id, s]));
@@ -2656,11 +2678,13 @@ function generateWeekSchedule(input) {
     }
   }
 
-  // 排班順序比時數（2026-11-21 Cynthia 決議）：進貨組 PT 每天只排一位、上午看出貨缺不缺人，「優先」的人可能天數多、半天數反而少。
-  // 半天數比排序後面的人少時，兩人各拿一天對調再排一次；沒有新的問題、總半天數沒變多才換
+  // 排班順序比時數（2026-11-21 Cynthia 決議）：同一組的 PT，排序後面的人（優先→一般→最後才排）半天數不能比前面的人多。
+  // 例如進貨組每天只排一位、上午看出貨缺不缺人，出貨組二級的人要有三級的人在才能排，都會讓前面的人反而比較少。
+  // 有這種情況時，兩人各拿一天對調（換不出差別時只把一天讓給前面的人）再排一次；
+  // 沒有新的問題、總半天數沒變多、整體差距有變小才換。前面的人請假、登記半天、天數已滿換不了的就不動
   const swapOff = new Set();
   const swaps = [];
-  const inboundLean = input.staff.filter((s) => s.is_active && leanPt(s) && s.primary_group === GROUP_INBOUND);
+  const orderedPts = input.staff.filter((s) => s.is_active && leanPt(s));
   const registeredOff = (ptId, date) => input.availability.some((a) => a.pt_id === ptId && a.date === date && a.range === "全天休假");
   const halvesIn = (res, ptId, date) =>
     new Set(
@@ -2668,40 +2692,44 @@ function generateWeekSchedule(input) {
         .filter((r) => r.priority === 1 && r.pt_id === ptId && (!date || r.date === date))
         .map((r) => `${r.date}|${HALF_SLOTS.上午.includes(r.slot) ? "上午" : "下午"}`)
     ).size;
+  const orderPairs = orderedPts.flatMap((hi) => orderedPts.filter((lo) => lo.primary_group === hi.primary_group && orderRank(hi) < orderRank(lo)).map((lo) => [hi, lo]));
+  const orderGap = (res) => orderPairs.reduce((sum, [hi, lo]) => sum + Math.max(0, halvesIn(res, lo.id) - halvesIn(res, hi.id)), 0);
   const swapTried = new Set();
   let swapAttempts = 0;
   swapLoop: for (;;) {
     const res = best.result;
+    const gapBefore = orderGap(res);
+    if (gapBefore === 0) break;
     const workDates = (ptId) => [...new Set(res.schedule.filter((r) => r.priority === 1 && r.pt_id === ptId).map((r) => r.date))];
     const autoOnly = (ptId, date) => res.schedule.filter((r) => r.date === date && r.pt_id === ptId).every((r) => r.source === "auto");
-    const canTake = (ptId, date) => !registeredOff(ptId, date) && !daysOff.has(`${ptId}|${date}`) && !swapOff.has(`${ptId}|${date}`) && !workDates(ptId).includes(date);
-    for (const hi of inboundLean) {
-      for (const lo of inboundLean) {
-        if (orderRank(hi) >= orderRank(lo) || halvesIn(res, hi.id) >= halvesIn(res, lo.id)) continue;
-        const gap = (r) => halvesIn(r, hi.id) - halvesIn(r, lo.id);
-        const give = workDates(lo.id)
-          .filter((d) => !isSaturday(d) && autoOnly(lo.id, d) && canTake(hi.id, d))
-          .sort((a, b) => halvesIn(res, lo.id, b) - halvesIn(res, lo.id, a) || (a < b ? -1 : 1));
-        const back = workDates(hi.id)
-          .filter((d) => !isSaturday(d) && autoOnly(hi.id, d) && canTake(lo.id, d))
-          .sort((a, b) => halvesIn(res, hi.id, a) - halvesIn(res, hi.id, b) || (a < b ? -1 : 1));
-        for (const dLo of give) {
-          // 一換一換不出差別時（例如兩人都只上下午），只把一天讓給排序前面的人
-          for (const dHi of [...back, null]) {
-            const loKey = `${lo.id}|${dLo}`;
-            const hiKey = dHi && `${hi.id}|${dHi}`;
-            if (swapTried.has(`${loKey}|${hiKey}`) || swapAttempts >= MAX_SWAP_TRIALS) continue;
-            swapTried.add(`${loKey}|${hiKey}`);
-            swapAttempts++;
-            const attempt = lean(new Set([...daysOff, ...swapOff, loKey, ...(hiKey ? [hiKey] : [])]));
-            const before = problems(res);
-            if (gap(attempt.result) > gap(res) && ptHalves(attempt.result) <= ptHalves(res) && [...problems(attempt.result)].every((m) => before.has(m))) {
-              swapOff.add(loKey);
-              if (hiKey) swapOff.add(hiKey);
-              swaps.push({ hi, lo, dLo, dHi });
-              best = attempt;
-              continue swapLoop;
-            }
+    const free = (ptId, date) => !registeredOff(ptId, date) && !daysOff.has(`${ptId}|${date}`) && !swapOff.has(`${ptId}|${date}`);
+    const pairs = orderPairs
+      .filter(([hi, lo]) => halvesIn(res, hi.id) < halvesIn(res, lo.id))
+      .sort(([h1, l1], [h2, l2]) => halvesIn(res, l2.id) - halvesIn(res, h2.id) - (halvesIn(res, l1.id) - halvesIn(res, h1.id)));
+    for (const [hi, lo] of pairs) {
+      // 讓出去的日子：後面的人上得比前面的人多、前面的人那天有空
+      const give = workDates(lo.id)
+        .filter((d) => !isSaturday(d) && autoOnly(lo.id, d) && autoOnly(hi.id, d) && free(hi.id, d) && halvesIn(res, hi.id, d) < halvesIn(res, lo.id, d))
+        .sort((a, b) => halvesIn(res, lo.id, b) - halvesIn(res, hi.id, b) - (halvesIn(res, lo.id, a) - halvesIn(res, hi.id, a)) || (a < b ? -1 : 1));
+      const back = workDates(hi.id)
+        .filter((d) => !isSaturday(d) && autoOnly(hi.id, d) && free(lo.id, d) && !workDates(lo.id).includes(d))
+        .sort((a, b) => halvesIn(res, hi.id, a) - halvesIn(res, hi.id, b) || (a < b ? -1 : 1));
+      for (const dLo of give) {
+        for (const dHi of [...back, null]) {
+          const loKey = `${lo.id}|${dLo}`;
+          const hiKey = dHi && `${hi.id}|${dHi}`;
+          if (swapTried.has(`${loKey}|${hiKey}`)) continue;
+          if (swapAttempts >= MAX_SWAP_TRIALS) break swapLoop;
+          swapTried.add(`${loKey}|${hiKey}`);
+          swapAttempts++;
+          const attempt = lean(new Set([...daysOff, ...swapOff, loKey, ...(hiKey ? [hiKey] : [])]));
+          const before = problems(res);
+          if (orderGap(attempt.result) < gapBefore && ptHalves(attempt.result) <= ptHalves(res) && [...problems(attempt.result)].every((m) => before.has(m))) {
+            swapOff.add(loKey);
+            if (hiKey) swapOff.add(hiKey);
+            swaps.push({ hi, lo, dLo, dHi });
+            best = attempt;
+            continue swapLoop;
           }
         }
       }
@@ -2712,7 +2740,7 @@ function generateWeekSchedule(input) {
   const { result, halvesOff, idleHalf } = best;
   const dayLabel = (ptId, date) => `${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${staffById.get(ptId).name}`;
   for (const { hi, lo, dLo, dHi } of swaps) {
-    const why = "讓排班順序「優先」的人時數不比後面的人少";
+    const why = "排班順序前面的人時數不比後面的人少";
     if (dHi) result.warnings.push({ type: "day_off", date: dHi, ptId: hi.id, message: `排班順序：${dayLabel(hi.id, dHi)} 這天換給 ${lo.name} 上，${hi.name} 改上 ${dLo}（${why}），可以自己調整` });
     result.warnings.push({ type: "day_off", date: dLo, ptId: lo.id, message: `排班順序：${dayLabel(lo.id, dLo)} 這天換給 ${hi.name} 上（${why}），可以自己調整` });
   }
@@ -3094,6 +3122,7 @@ function checkWeekSchedule(input) {
     }
   }
   warnUnplacedRequests(ctx, weekDates);
+  checkScheduleOrder(ctx, weekDates);
 
   // 正職第三天：原本就沒有第三天、而且目前週二～週五沒有任何正職印單，才提醒
   const before = ctx.warnings.length;

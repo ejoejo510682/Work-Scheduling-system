@@ -201,6 +201,13 @@ export function buildReminders({
           targets: [{ date, slot: w.slot, positionId: w.positionId, ptId: w.ptId }],
         });
         break;
+      case "order":
+        push("rule", {
+          title: msg,
+          detail: "自動排班試過對調，換了會缺人才沒換：通常是前面的人不會做那些崗位（例如二級要有三級陪同、限男生），或那幾天請假、天數已滿。可以自己調整，接受就勾已看過。",
+          targets: [{ ptId: w.ptId }],
+        });
+        break;
       case "shipping_on_inbound":
         push("shipToInbound", {
           title: `${dl(date)} ${w.slot} ${staffName(w.ptId ?? "")} 排去${positionName(w.positionId ?? "")}`,
