@@ -1446,6 +1446,10 @@ function assignSlot(ctx, date, slot, isPriority, extraHeadcount, skipPositionIds
 // ----------------------------------------------------------------------------
 
 const SATURDAY_SLOTS = ["上午出訂單前", "上午出訂單後", "下午出訂單前", "下午出訂單後"];
+// 週六 3 人：1 正職＋B組（多）1 位＋A組（少）1 位（2026-11-21 Cynthia 決議，原本 1 正職＋B組 2 位＋A組 1 位）
+const SATURDAY_PT_HIGH = 1;
+const SATURDAY_PT_LOW = 1;
+const SATURDAY_PT_COUNT = SATURDAY_PT_HIGH + SATURDAY_PT_LOW;
 
 // ----------------------------------------------------------------------------
 // 十五之〇、週六輪流（票1 第六次補充決議）
@@ -1555,15 +1559,15 @@ function assignSaturday(ctx, date, printerId) {
   }
 
   // PT（第六次補充決議）：先分「三級崗位多／少」兩群，各群內照週六輪流順序挑，
-  // 維持 2 位多＋1 位少；已經在週六班底裡的 PT（例如被手動鎖定在週六）先算進各群名額。
+  // 維持 B組（多）1 位＋A組（少）1 位；已經在週六班底裡的 PT（例如被手動鎖定在週六）先算進各群名額。
   // 某一群出貨組不夠時，先用出貨組另一群補（出貨組優先於進貨組，第三次補充決議），
   // 出貨組全部不夠才找進貨組，而且缺哪一群就先從進貨組的那一群找。
   const { high } = splitSaturdayPtGroups(ctx);
   const crewNow = crewIds();
   const crewPts = [...crewNow].map(staffById).filter((s) => s && s.employment_type === "PT");
-  const totalNeed = Math.max(0, 3 - crewPts.length);
-  const needHigh = Math.min(totalNeed, Math.max(0, 2 - crewPts.filter((s) => high.has(s.id)).length));
-  const needLow = Math.min(totalNeed - needHigh, Math.max(0, 1 - crewPts.filter((s) => !high.has(s.id)).length));
+  const totalNeed = Math.max(0, SATURDAY_PT_COUNT - crewPts.length);
+  const needHigh = Math.min(totalNeed, Math.max(0, SATURDAY_PT_HIGH - crewPts.filter((s) => high.has(s.id)).length));
+  const needLow = Math.min(totalNeed - needHigh, Math.max(0, SATURDAY_PT_LOW - crewPts.filter((s) => !high.has(s.id)).length));
   const pool = ctx.activeStaff.filter((s) => s.employment_type === "PT" && !crewNow.has(s.id) && eligibleToday(s));
   const ordered = (list) => saturdayRotationOrder(ctx, list.map((s) => s.id)).map(staffById);
   const ship = pool.filter((s) => s.primary_group === GROUP_SHIPPING);
@@ -1684,14 +1688,14 @@ function assignSaturday(ctx, date, printerId) {
   const finalCrew = [...crewIds()].map(staffById).filter(Boolean);
   const ftCount = finalCrew.filter((s) => s.employment_type === "正職").length;
   const ptCount = finalCrew.filter((s) => s.employment_type === "PT").length;
-  if (ftCount < 1 || ptCount < 3) {
+  if (ftCount < 1 || ptCount < SATURDAY_PT_COUNT) {
     const parts = [];
     if (ftCount < 1) parts.push("正職 0/1 位");
-    if (ptCount < 3) parts.push(`PT ${ptCount}/3 位`);
+    if (ptCount < SATURDAY_PT_COUNT) parts.push(`PT ${ptCount}/${SATURDAY_PT_COUNT} 位`);
     ctx.warnings.push({
       type: "shortage",
       date,
-      message: `${date}（週六）人數沒有湊滿硬性規定的 4 人（1 正職 + 3 PT），目前只排到 ${Math.min(ftCount, 1) + Math.min(ptCount, 3)} 人（${parts.join("、")}），需要人工調整`,
+      message: `${date}（週六）人數沒有湊滿硬性規定的 ${1 + SATURDAY_PT_COUNT} 人（1 正職 + ${SATURDAY_PT_COUNT} PT），目前只排到 ${Math.min(ftCount, 1) + Math.min(ptCount, SATURDAY_PT_COUNT)} 人（${parts.join("、")}），需要人工調整`,
     });
   }
 }
@@ -2847,14 +2851,14 @@ function checkSaturdayCrew(ctx, date) {
     .filter(Boolean);
   const ftCount = crew.filter((s) => s.employment_type === "正職").length;
   const ptCount = crew.filter((s) => s.employment_type === "PT").length;
-  if (ftCount < 1 || ptCount < 3) {
+  if (ftCount < 1 || ptCount < SATURDAY_PT_COUNT) {
     const parts = [];
     if (ftCount < 1) parts.push("正職 0/1 位");
-    if (ptCount < 3) parts.push(`PT ${ptCount}/3 位`);
+    if (ptCount < SATURDAY_PT_COUNT) parts.push(`PT ${ptCount}/${SATURDAY_PT_COUNT} 位`);
     ctx.warnings.push({
       type: "shortage",
       date,
-      message: `${date}（週六）沒有湊滿 4 人（1 正職＋3 PT），目前 ${parts.join("、")}`,
+      message: `${date}（週六）沒有湊滿 ${1 + SATURDAY_PT_COUNT} 人（1 正職＋${SATURDAY_PT_COUNT} PT），目前 ${parts.join("、")}`,
     });
   }
 }

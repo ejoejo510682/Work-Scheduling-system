@@ -431,7 +431,7 @@ export function PtTable({
         <div>
           <dt className="inline font-medium text-zinc-900 dark:text-zinc-50">週六：</dt>
           <dd className="inline">
-            週六排 1 位正職＋3 位 PT（B組 2 位、A組 1 位，B組是三級崗位多的人），組內離上次上週六最久的人先排。
+            週六排 3 人：1 位正職＋2 位 PT（B組 1 位、A組 1 位，B組是三級崗位多的人），組內離上次上週六最久的人先排。
           </dd>
         </div>
         <div>
