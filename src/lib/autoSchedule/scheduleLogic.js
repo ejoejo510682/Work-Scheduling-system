@@ -2533,6 +2533,7 @@ const morningSupportPt = (s) => s.employment_type === "PT" && s.primary_group ==
 // 每人每週至少留 1 天；週六、車趟、那天有手動格子的不動
 const PROBLEM_TYPES = ["shortage", "task", "manual"];
 const MAX_DAY_OFF_TRIALS = 40;
+const MAX_SWAP_TRIALS = 12;
 
 function generateWeekSchedule(input) {
   const staffById = new Map(input.staff.map((s) => [s.id, s]));
@@ -2655,8 +2656,66 @@ function generateWeekSchedule(input) {
     }
   }
 
+  // 排班順序比時數（2026-11-21 Cynthia 決議）：進貨組 PT 每天只排一位、上午看出貨缺不缺人，「優先」的人可能天數多、半天數反而少。
+  // 半天數比排序後面的人少時，兩人各拿一天對調再排一次；沒有新的問題、總半天數沒變多才換
+  const swapOff = new Set();
+  const swaps = [];
+  const inboundLean = input.staff.filter((s) => s.is_active && leanPt(s) && s.primary_group === GROUP_INBOUND);
+  const registeredOff = (ptId, date) => input.availability.some((a) => a.pt_id === ptId && a.date === date && a.range === "全天休假");
+  const halvesIn = (res, ptId, date) =>
+    new Set(
+      res.schedule
+        .filter((r) => r.priority === 1 && r.pt_id === ptId && (!date || r.date === date))
+        .map((r) => `${r.date}|${HALF_SLOTS.上午.includes(r.slot) ? "上午" : "下午"}`)
+    ).size;
+  const swapTried = new Set();
+  let swapAttempts = 0;
+  swapLoop: for (;;) {
+    const res = best.result;
+    const workDates = (ptId) => [...new Set(res.schedule.filter((r) => r.priority === 1 && r.pt_id === ptId).map((r) => r.date))];
+    const autoOnly = (ptId, date) => res.schedule.filter((r) => r.date === date && r.pt_id === ptId).every((r) => r.source === "auto");
+    const canTake = (ptId, date) => !registeredOff(ptId, date) && !daysOff.has(`${ptId}|${date}`) && !swapOff.has(`${ptId}|${date}`) && !workDates(ptId).includes(date);
+    for (const hi of inboundLean) {
+      for (const lo of inboundLean) {
+        if (orderRank(hi) >= orderRank(lo) || halvesIn(res, hi.id) >= halvesIn(res, lo.id)) continue;
+        const gap = (r) => halvesIn(r, hi.id) - halvesIn(r, lo.id);
+        const give = workDates(lo.id)
+          .filter((d) => !isSaturday(d) && autoOnly(lo.id, d) && canTake(hi.id, d))
+          .sort((a, b) => halvesIn(res, lo.id, b) - halvesIn(res, lo.id, a) || (a < b ? -1 : 1));
+        const back = workDates(hi.id)
+          .filter((d) => !isSaturday(d) && autoOnly(hi.id, d) && canTake(lo.id, d))
+          .sort((a, b) => halvesIn(res, hi.id, a) - halvesIn(res, hi.id, b) || (a < b ? -1 : 1));
+        for (const dLo of give) {
+          // 一換一換不出差別時（例如兩人都只上下午），只把一天讓給排序前面的人
+          for (const dHi of [...back, null]) {
+            const loKey = `${lo.id}|${dLo}`;
+            const hiKey = dHi && `${hi.id}|${dHi}`;
+            if (swapTried.has(`${loKey}|${hiKey}`) || swapAttempts >= MAX_SWAP_TRIALS) continue;
+            swapTried.add(`${loKey}|${hiKey}`);
+            swapAttempts++;
+            const attempt = lean(new Set([...daysOff, ...swapOff, loKey, ...(hiKey ? [hiKey] : [])]));
+            const before = problems(res);
+            if (gap(attempt.result) > gap(res) && ptHalves(attempt.result) <= ptHalves(res) && [...problems(attempt.result)].every((m) => before.has(m))) {
+              swapOff.add(loKey);
+              if (hiKey) swapOff.add(hiKey);
+              swaps.push({ hi, lo, dLo, dHi });
+              best = attempt;
+              continue swapLoop;
+            }
+          }
+        }
+      }
+    }
+    break;
+  }
+
   const { result, halvesOff, idleHalf } = best;
   const dayLabel = (ptId, date) => `${date}（週${WEEKDAY_NAMES[getWeekdayIndex(date)]}）${staffById.get(ptId).name}`;
+  for (const { hi, lo, dLo, dHi } of swaps) {
+    const why = "讓排班順序「優先」的人時數不比後面的人少";
+    if (dHi) result.warnings.push({ type: "day_off", date: dHi, ptId: hi.id, message: `排班順序：${dayLabel(hi.id, dHi)} 這天換給 ${lo.name} 上，${hi.name} 改上 ${dLo}（${why}），可以自己調整` });
+    result.warnings.push({ type: "day_off", date: dLo, ptId: lo.id, message: `排班順序：${dayLabel(lo.id, dLo)} 這天換給 ${hi.name} 上（${why}），可以自己調整` });
+  }
   for (const key of daysOff) {
     const [ptId, date] = key.split("|");
     const why = orderRank(staffById.get(ptId)) === ORDER_RANK.最後 ? "（排班順序：最後才排）" : "";
@@ -2668,7 +2727,7 @@ function generateWeekSchedule(input) {
     });
   }
   for (const [key, off] of halvesOff) {
-    if (daysOff.has(key)) continue;
+    if (daysOff.has(key) || swapOff.has(key)) continue;
     const [ptId, date] = key.split("|");
     const staffRow = staffById.get(ptId);
     const halves = [...off].join("、");
