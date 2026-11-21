@@ -224,9 +224,13 @@ function isPriorityShippingDay(dateStr, specialDates) {
 const MORNING_SLOTS = ["上午出訂單前", "上午出訂單後"];
 const AFTERNOON_SLOTS = ["下午出訂單前", "下午出訂單後"];
 
+// 人力精實替登記「全天」的人休上午時用：下午照常上到出貨完成後（登記「只下午」的人不上出貨完成後）
+const LEAN_AFTERNOON = "下午到收班";
+
 function isAvailableForSlot(range, slot) {
   if (range === "全天休假") return false;
   if (range === "全天") return true;
+  if (range === LEAN_AFTERNOON) return AFTERNOON_SLOTS.includes(slot) || slot === "出貨完成後";
   if (range === "只上午") return MORNING_SLOTS.includes(slot);
   if (range === "只下午") return AFTERNOON_SLOTS.includes(slot);
   return false;
@@ -2521,7 +2525,7 @@ function warnUnplacedRequests(ctx, weekDates) {
 // 改成那半天休假再重排一次，直到沒有這種情況；整天都沒有出貨工作才整天休假。那半天有手動格子的不動。
 // 進貨組 PT 也一樣（2026-11-17 Cynthia 決議「出貨組優先」）：平日上午出貨已經被出貨組排滿、他沒排進出貨，就休上午、下午照常做進貨
 const HALF_OF_SHIPPING_SLOT = { 上午出訂單後: "上午", 下午出訂單後: "下午" };
-const RANGE_HALVES = { 全天: ["上午", "下午"], 只上午: ["上午"], 只下午: ["下午"], 全天休假: [] };
+const RANGE_HALVES = { 全天: ["上午", "下午"], 只上午: ["上午"], 只下午: ["下午"], [LEAN_AFTERNOON]: ["下午"], 全天休假: [] };
 const HALF_SLOTS = { 上午: MORNING_SLOTS, 下午: [...AFTERNOON_SLOTS, "出貨完成後"] };
 const morningSupportPt = (s) => s.employment_type === "PT" && s.primary_group === GROUP_INBOUND && !s.skip_priority_shipping_support;
 // 控制人力成本（2026-11-18 Cynthia 決議）：PT 半天整個沒有工作也休那半天；人多時盡量砍整天——每次挑一位有休半天的人
@@ -2552,7 +2556,9 @@ function generateWeekSchedule(input) {
       for (const key of changed) {
         const [pt_id, date] = key.split("|");
         const left = daysOff.has(key) ? [] : registeredHalves(pt_id, date).filter((h) => !halvesOff.get(key).has(h));
-        availability.push({ pt_id, date, range: left.length === 2 ? "全天" : left.length === 1 ? `只${left[0]}` : "全天休假" });
+        const wholeDay = registeredHalves(pt_id, date).length === 2;
+        const half = left[0] === "下午" && wholeDay ? LEAN_AFTERNOON : `只${left[0]}`;
+        availability.push({ pt_id, date, range: left.length === 2 ? "全天" : left.length === 1 ? half : "全天休假" });
       }
       return generateWeekScheduleOnce({ ...input, availability });
     };
