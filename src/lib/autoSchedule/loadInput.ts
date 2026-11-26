@@ -51,6 +51,7 @@ export async function loadAutoScheduleInput(
     supabase
       .from("positions")
       .select("id, name, is_active, sort_order, work_group, included_in_auto_schedule, gender_restriction, max_headcount, fill_first")
+      .eq("hour_based", false)
       .order("sort_order"),
     supabase
       .from("pt_staff")

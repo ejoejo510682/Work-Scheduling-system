@@ -43,6 +43,7 @@ export default async function TaskRegistrationPage({
       .from("positions")
       .select("id, name, included_in_auto_schedule")
       .eq("is_active", true)
+      .eq("hour_based", false)
       .order("sort_order"),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
     supabase

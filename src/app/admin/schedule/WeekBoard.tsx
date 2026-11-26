@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { SLOTS, type EmploymentType } from "@/lib/constants";
+import { SLOT_HOURS, SLOTS, type EmploymentType, type Slot } from "@/lib/constants";
 import { CATEGORIES, targetMatches, type CategoryKey, type Reminder, type Target } from "@/lib/autoSchedule/reminderCategories";
 
 type DayInfo = {
@@ -140,6 +140,16 @@ export function WeekBoard({
 
   const positionById = new Map(positions.map((p) => [p.id, p]));
   const staffById = new Map(staff.map((s) => [s.id, s]));
+  // 時數只算主要任務，備援不另外算；同一人同一時段只算一次
+  const hoursFor = (type: EmploymentType, date?: string) => {
+    const keys = new Set(
+      rows
+        .filter((r) => r.priority === 1 && (!date || r.date === date) && staffById.get(r.pt_id)?.employmentType === type)
+        .map((r) => `${r.date}|${r.slot}|${r.pt_id}`)
+    );
+    return [...keys].reduce((sum, k) => sum + (SLOT_HOURS[k.split("|")[1] as Slot] ?? 0), 0);
+  };
+  const fmtHours = (h: number) => (Number.isInteger(h) ? String(h) : h.toFixed(1));
   const slotOpen = (positionId: string, slot: string) => slotMap.some((m) => m.position_id === positionId && m.slot === slot);
   const dayOff = new Set(dayOffNotes.map((n) => `${n.date}|${n.ptId}`));
 
@@ -401,6 +411,12 @@ export function WeekBoard({
           {d.changed && (
             <span className="rounded bg-red-600 px-1.5 py-0.5 text-xs font-bold text-white">假日有變動，請重排</span>
           )}
+          {!d.closed && rows.some((r) => r.date === d.date) && (
+            <span className="text-xs text-zinc-600 dark:text-zinc-400">
+              PT <span className="font-bold text-zinc-900 dark:text-zinc-50">{fmtHours(hoursFor("PT", d.date))}</span> 小時・正職{" "}
+              {fmtHours(hoursFor("正職", d.date))} 小時
+            </span>
+          )}
           {!d.closed && (
             <Link href={`/admin/schedule/${d.date}`} className="ml-auto text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-50">
               單日頁編輯 →
@@ -481,6 +497,18 @@ export function WeekBoard({
       </div>
 
       <aside className="space-y-3 self-start lg:sticky lg:top-4">
+        {rows.length > 0 && (
+          <div className="rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+            <h2 className="font-bold text-zinc-900 dark:text-zinc-50">本週時數</h2>
+            <p className="mt-1 text-sm text-zinc-700 dark:text-zinc-300">
+              PT 合計 <span className="text-lg font-bold text-zinc-900 dark:text-zinc-50">{fmtHours(hoursFor("PT"))}</span> 小時・正職{" "}
+              {fmtHours(hoursFor("正職"))} 小時
+            </p>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              照排定的時段算（午休已扣），備援不算；出貨完成後先估 0.5 小時。
+            </p>
+          </div>
+        )}
         <div className="space-y-2 rounded border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="font-bold text-zinc-900 dark:text-zinc-50">草稿提醒</h2>
           {cronMissed && lastRun?.status !== "failed" && (

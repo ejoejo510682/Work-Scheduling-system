@@ -27,10 +27,26 @@ export const getCachedActivePositions = unstable_cache(
       .from("positions")
       .select("id, name, sort_order")
       .eq("is_active", true)
+      .eq("hour_based", false)
       .order("sort_order");
     return data ?? [];
   },
   ["positions-active"],
+  { revalidate: 60 },
+);
+
+// 能力表用：舊崗位加上新版（時數制）崗位，新版崗位名字後面標「（新）」，跟同名的舊崗位分開
+export const getCachedAbilityPositions = unstable_cache(
+  async () => {
+    const supabase = createServiceRoleClient();
+    const { data } = await supabase
+      .from("positions")
+      .select("id, name, sort_order, hour_based")
+      .eq("is_active", true)
+      .order("sort_order");
+    return (data ?? []).map((p) => ({ id: p.id, name: p.hour_based ? `${p.name}（新）` : p.name, sort_order: p.sort_order }));
+  },
+  ["positions-ability"],
   { revalidate: 60 },
 );
 

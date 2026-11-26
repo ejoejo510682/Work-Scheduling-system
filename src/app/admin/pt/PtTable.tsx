@@ -28,6 +28,8 @@ type Pt = {
   shipping_support_position_id: string | null;
   skip_priority_shipping_support: boolean;
   schedule_order: ScheduleOrder;
+  main_position_ids: string[];
+  weekly_max_hours: number;
 };
 
 type ScheduleOrder = "優先" | "一般" | "最後";
@@ -72,6 +74,13 @@ function saturdayOptions(type: EmploymentType): { value: SaturdayChoice; label: 
       ];
 }
 
+// 主要崗位最多兩個、一樣優先：第一個清掉時第二個往前補
+function mainPositionsAfter(current: string[], index: number, value: string) {
+  const next = [...current];
+  next[index] = value;
+  return next.filter(Boolean);
+}
+
 const typeSelectStyles: Record<EmploymentType, string> = {
   PT: "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300",
   正職: "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300",
@@ -83,9 +92,11 @@ const selectClass =
 export function PtTable({
   initialPt,
   shippingPositions,
+  hourPositions,
 }: {
   initialPt: Pt[];
   shippingPositions: { id: string; name: string }[];
+  hourPositions: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -210,6 +221,8 @@ export function PtTable({
               <th className="px-3 py-2">性別</th>
               <th className="px-3 py-2">週六</th>
               <th className="px-3 py-2">排班順序</th>
+              <th className="px-3 py-2 whitespace-nowrap">主要崗位（新版）</th>
+              <th className="px-3 py-2 whitespace-nowrap">每週最多時數（新版）</th>
               <th className="px-3 py-2">平日自動排班</th>
               <th className="px-3 py-2">平日正職印單</th>
               <th className="px-3 py-2">出貨優先日不支援出貨</th>
@@ -340,6 +353,56 @@ export function PtTable({
                           </option>
                         ))}
                       </select>
+                    ) : (
+                      <span className="text-zinc-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex gap-1">
+                      {[0, 1].map((i) => (
+                        <select
+                          key={i}
+                          value={pt.main_position_ids[i] ?? ""}
+                          disabled={busy || (i === 1 && !pt.main_position_ids[0])}
+                          onChange={(e) => updatePt(pt, { main_position_ids: mainPositionsAfter(pt.main_position_ids, i, e.target.value) })}
+                          aria-label={`${pt.name}主要崗位${i + 1}`}
+                          className={selectClass}
+                        >
+                          <option value="">{i === 0 ? "未設定" : "—"}</option>
+                          {hourPositions
+                            .filter((p) => p.id === pt.main_position_ids[i] || !pt.main_position_ids.includes(p.id))
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                        </select>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    {pt.employment_type === "PT" ? (
+                      <input
+                        key={pt.weekly_max_hours}
+                        type="number"
+                        min={1}
+                        step={0.5}
+                        inputMode="decimal"
+                        defaultValue={pt.weekly_max_hours}
+                        disabled={busy}
+                        onBlur={(e) => {
+                          const hours = Number(e.target.value);
+                          if (hours === Number(pt.weekly_max_hours)) return;
+                          if (!Number.isFinite(hours) || hours <= 0 || (hours * 2) % 1 !== 0) {
+                            alert("每週最多時數要大於 0、以 0.5 小時為單位");
+                            e.target.value = String(pt.weekly_max_hours);
+                            return;
+                          }
+                          updatePt(pt, { weekly_max_hours: hours });
+                        }}
+                        aria-label={`${pt.name}每週最多時數`}
+                        className={`${selectClass} w-16`}
+                      />
                     ) : (
                       <span className="text-zinc-400">—</span>
                     )}

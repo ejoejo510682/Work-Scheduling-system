@@ -1,7 +1,7 @@
 import { requireRole } from "@/lib/auth/requireRole";
 import { createClient } from "@/lib/supabase/server";
 import { ABILITY_LEVELS, type EmploymentType } from "@/lib/constants";
-import { getCachedActivePositions, getCachedActivePt } from "@/lib/cachedReferenceData";
+import { getCachedAbilityPositions, getCachedActivePt } from "@/lib/cachedReferenceData";
 import { EmploymentTypeBadge } from "@/components/admin/EmploymentTypeBadge";
 
 const levelStyles: Record<number, string> = {
@@ -17,7 +17,7 @@ export default async function AbilitySummaryPage() {
 
   const supabase = await createClient();
   const [positions, pt, { data: abilities }] = await Promise.all([
-    getCachedActivePositions(),
+    getCachedAbilityPositions(),
     getCachedActivePt(),
     supabase.from("pt_abilities").select("pt_id, position_id, level"),
   ]);

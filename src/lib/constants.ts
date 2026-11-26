@@ -8,6 +8,16 @@ export const SLOTS = [
 
 export type Slot = (typeof SLOTS)[number];
 
+// 每個時段幾小時（2026-11-26 Cynthia 提供，午休已排除）：8:30-9:00、9:00-12:30、13:30-14:30、14:30-17:30；
+// 出貨完成後時間不一定，先估 0.5 小時。週六跟平日同時間
+export const SLOT_HOURS: Record<Slot, number> = {
+  上午出訂單前: 0.5,
+  上午出訂單後: 3.5,
+  下午出訂單前: 1,
+  下午出訂單後: 3,
+  出貨完成後: 0.5,
+};
+
 export const AVAILABILITY_RANGES = ["全天", "只上午", "只下午", "全天休假"] as const;
 
 export type AvailabilityRange = (typeof AVAILABILITY_RANGES)[number];
