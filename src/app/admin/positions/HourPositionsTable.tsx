@@ -1,6 +1,6 @@
 "use client";
 
-// 新版排班（時數制）的崗位設定：可以做的時間、四種日子的最高可安排時數。切換到新版之前，舊版自動排班不會用到這些崗位
+// 新版排班（時數制）的崗位設定：可以做的時間、五種日子的最高可安排時數。切換到新版之前，舊版自動排班不會用到這些崗位
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -13,15 +13,17 @@ export type HourPosition = {
   work_windows: [string, string][];
   hours_event: number | null;
   hours_mon_tue: number | null;
-  hours_normal: number | null;
+  hours_wednesday: number | null;
+  hours_thu_fri: number | null;
   hours_saturday: number | null;
 };
 
-type HoursKey = "hours_event" | "hours_mon_tue" | "hours_normal" | "hours_saturday";
+type HoursKey = "hours_event" | "hours_mon_tue" | "hours_wednesday" | "hours_thu_fri" | "hours_saturday";
 const HOURS_COLUMNS: { key: HoursKey; label: string }[] = [
   { key: "hours_event", label: "活動日" },
   { key: "hours_mon_tue", label: "週一、週二" },
-  { key: "hours_normal", label: "一般日" },
+  { key: "hours_wednesday", label: "週三" },
+  { key: "hours_thu_fri", label: "週四、週五" },
   { key: "hours_saturday", label: "週六" },
 ];
 
@@ -98,7 +100,8 @@ function HourPositionRow({ position }: { position: HourPosition }) {
   const [hours, setHours] = useState<Record<HoursKey, string>>({
     hours_event: position.hours_event?.toString() ?? "",
     hours_mon_tue: position.hours_mon_tue?.toString() ?? "",
-    hours_normal: position.hours_normal?.toString() ?? "",
+    hours_wednesday: position.hours_wednesday?.toString() ?? "",
+    hours_thu_fri: position.hours_thu_fri?.toString() ?? "",
     hours_saturday: position.hours_saturday?.toString() ?? "",
   });
   const [gender, setGender] = useState(position.gender_restriction ?? "");
