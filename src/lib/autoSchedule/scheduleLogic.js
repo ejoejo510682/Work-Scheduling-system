@@ -3146,4 +3146,4 @@ function checkWeekSchedule(input) {
   return { warnings, idleByDate };
 }
 
-export { generateWeekSchedule, checkWeekSchedule, isPriorityShippingDay, getWeekDates, getWeekdayIndex };
+export { generateWeekSchedule, checkWeekSchedule, isPriorityShippingDay, getWeekDates, getWeekdayIndex, isHolidayDate };

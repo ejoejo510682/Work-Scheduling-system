@@ -93,8 +93,14 @@ export default async function SchedulePage({
           下一週 →
         </Link>
         <Link
+          href={`/admin/schedule/hours?week=${monday}`}
+          className="ml-auto rounded border border-violet-300 px-3 py-1 text-sm font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-950"
+        >
+          🧪 新版試排
+        </Link>
+        <Link
           href={`/admin/schedule/picking-list?week=${monday}`}
-          className="ml-auto rounded border border-zinc-300 px-3 py-1 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          className="rounded border border-zinc-300 px-3 py-1 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
         >
           📋 撿貨名單
         </Link>

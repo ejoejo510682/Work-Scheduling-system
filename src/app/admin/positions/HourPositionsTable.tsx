@@ -11,6 +11,8 @@ export type HourPosition = {
   included_in_auto_schedule: boolean;
   gender_restriction: "男" | "女" | null;
   work_windows: [string, string][];
+  saturday_windows: [string, string][] | null;
+  split_halves: boolean;
   hours_event: number | null;
   hours_mon_tue: number | null;
   hours_wednesday: number | null;
@@ -71,6 +73,8 @@ export function HourPositionsTable({ positions }: { positions: HourPosition[] })
             <tr>
               <th className="px-3 py-2">崗位</th>
               <th className="px-3 py-2">可以做的時間</th>
+              <th className="px-3 py-2 whitespace-nowrap">週六可以做的時間</th>
+              <th className="px-3 py-2 whitespace-nowrap">上午、下午都要有人</th>
               {HOURS_COLUMNS.map((c) => (
                 <th key={c.key} className="px-3 py-2 whitespace-nowrap">
                   {c.label}（小時）
@@ -88,7 +92,8 @@ export function HourPositionsTable({ positions }: { positions: HourPosition[] })
         </table>
       </div>
       <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-        可以做的時間用 30 分鐘為單位、在 8:30-17:30 之間、避開午休 12:30-13:30，好幾段用「、」隔開。時數留空代表還沒設定。
+        可以做的時間用 30 分鐘為單位、在 8:30-17:30 之間、避開午休 12:30-13:30，好幾段用「、」隔開；週六留空代表跟平日一樣。
+        勾「上午、下午都要有人」的崗位，時數會平均分到上午、下午兩邊（可以做的時間只有一邊的日子不分）。時數留空代表還沒設定。
       </p>
     </section>
   );
@@ -97,6 +102,8 @@ export function HourPositionsTable({ positions }: { positions: HourPosition[] })
 function HourPositionRow({ position }: { position: HourPosition }) {
   const router = useRouter();
   const [windowsText, setWindowsText] = useState(formatWindows(position.work_windows));
+  const [saturdayText, setSaturdayText] = useState(position.saturday_windows ? formatWindows(position.saturday_windows) : "");
+  const [splitHalves, setSplitHalves] = useState(position.split_halves);
   const [hours, setHours] = useState<Record<HoursKey, string>>({
     hours_event: position.hours_event?.toString() ?? "",
     hours_mon_tue: position.hours_mon_tue?.toString() ?? "",
@@ -114,7 +121,17 @@ function HourPositionRow({ position }: { position: HourPosition }) {
       setMessage({ kind: "error", text: windows });
       return;
     }
-    const patch: Record<string, unknown> = { work_windows: windows, gender_restriction: gender || null };
+    const saturdayWindows = saturdayText.trim() === "" ? null : parseWindows(saturdayText);
+    if (typeof saturdayWindows === "string") {
+      setMessage({ kind: "error", text: `週六：${saturdayWindows}` });
+      return;
+    }
+    const patch: Record<string, unknown> = {
+      work_windows: windows,
+      saturday_windows: saturdayWindows,
+      split_halves: splitHalves,
+      gender_restriction: gender || null,
+    };
     for (const c of HOURS_COLUMNS) {
       const raw = hours[c.key].trim();
       if (raw === "") {
@@ -137,6 +154,7 @@ function HourPositionRow({ position }: { position: HourPosition }) {
       return;
     }
     setWindowsText(formatWindows(windows));
+    setSaturdayText(saturdayWindows ? formatWindows(saturdayWindows) : "");
     setMessage({ kind: "ok", text: "已儲存" });
     router.refresh();
   }
@@ -153,6 +171,23 @@ function HourPositionRow({ position }: { position: HourPosition }) {
           onChange={(e) => setWindowsText(e.target.value)}
           aria-label={`${position.name}可以做的時間`}
           className={`${inputClass} w-56`}
+        />
+      </td>
+      <td className="px-3 py-2">
+        <input
+          value={saturdayText}
+          onChange={(e) => setSaturdayText(e.target.value)}
+          placeholder="跟平日一樣"
+          aria-label={`${position.name}週六可以做的時間`}
+          className={`${inputClass} w-56`}
+        />
+      </td>
+      <td className="px-3 py-2 text-center">
+        <input
+          type="checkbox"
+          checked={splitHalves}
+          onChange={(e) => setSplitHalves(e.target.checked)}
+          aria-label={`${position.name}上午、下午都要有人`}
         />
       </td>
       {HOURS_COLUMNS.map((c) => (
