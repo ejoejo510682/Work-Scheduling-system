@@ -1,6 +1,6 @@
 "use client";
 
-// 新版排班（時數制）的崗位設定：可以做的時間、五種日子的最高可安排時數。切換到新版之前，舊版自動排班不會用到這些崗位
+// 新版排班（時數制）的崗位設定：可以做的時間、活動日和週一到週六每天的最高可安排時數。切換到新版之前，舊版自動排班不會用到這些崗位
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -14,18 +14,22 @@ export type HourPosition = {
   saturday_windows: [string, string][] | null;
   split_halves: boolean;
   hours_event: number | null;
-  hours_mon_tue: number | null;
+  hours_monday: number | null;
+  hours_tuesday: number | null;
   hours_wednesday: number | null;
-  hours_thu_fri: number | null;
+  hours_thursday: number | null;
+  hours_friday: number | null;
   hours_saturday: number | null;
 };
 
-type HoursKey = "hours_event" | "hours_mon_tue" | "hours_wednesday" | "hours_thu_fri" | "hours_saturday";
+type HoursKey = "hours_event" | "hours_monday" | "hours_tuesday" | "hours_wednesday" | "hours_thursday" | "hours_friday" | "hours_saturday";
 const HOURS_COLUMNS: { key: HoursKey; label: string }[] = [
   { key: "hours_event", label: "活動日" },
-  { key: "hours_mon_tue", label: "週一、週二" },
+  { key: "hours_monday", label: "週一" },
+  { key: "hours_tuesday", label: "週二" },
   { key: "hours_wednesday", label: "週三" },
-  { key: "hours_thu_fri", label: "週四、週五" },
+  { key: "hours_thursday", label: "週四" },
+  { key: "hours_friday", label: "週五" },
   { key: "hours_saturday", label: "週六" },
 ];
 
@@ -106,9 +110,11 @@ function HourPositionRow({ position }: { position: HourPosition }) {
   const [splitHalves, setSplitHalves] = useState(position.split_halves);
   const [hours, setHours] = useState<Record<HoursKey, string>>({
     hours_event: position.hours_event?.toString() ?? "",
-    hours_mon_tue: position.hours_mon_tue?.toString() ?? "",
+    hours_monday: position.hours_monday?.toString() ?? "",
+    hours_tuesday: position.hours_tuesday?.toString() ?? "",
     hours_wednesday: position.hours_wednesday?.toString() ?? "",
-    hours_thu_fri: position.hours_thu_fri?.toString() ?? "",
+    hours_thursday: position.hours_thursday?.toString() ?? "",
+    hours_friday: position.hours_friday?.toString() ?? "",
     hours_saturday: position.hours_saturday?.toString() ?? "",
   });
   const [gender, setGender] = useState(position.gender_restriction ?? "");

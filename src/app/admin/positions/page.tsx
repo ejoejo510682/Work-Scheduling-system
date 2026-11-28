@@ -26,7 +26,7 @@ export default async function PositionsPage() {
       supabase.from("pt_staff").select("id, name, employment_type, gender").eq("is_active", true).order("name"),
       supabase
         .from("positions")
-        .select("id, name, included_in_auto_schedule, gender_restriction, work_windows, saturday_windows, split_halves, hours_event, hours_mon_tue, hours_wednesday, hours_thu_fri, hours_saturday")
+        .select("id, name, included_in_auto_schedule, gender_restriction, work_windows, saturday_windows, split_halves, hours_event, hours_monday, hours_tuesday, hours_wednesday, hours_thursday, hours_friday, hours_saturday")
         .eq("hour_based", true)
         .eq("is_active", true)
         .order("sort_order"),

@@ -8,7 +8,7 @@ export async function loadHourScheduleInput(supabase: SupabaseClient, monday: st
   const [positions, oldPositions, staff, abilities, availability, specialDates, pastSchedule, requests] = await Promise.all([
     supabase
       .from("positions")
-      .select("id, name, is_active, sort_order, included_in_auto_schedule, gender_restriction, work_windows, saturday_windows, split_halves, hours_event, hours_mon_tue, hours_wednesday, hours_thu_fri, hours_saturday")
+      .select("id, name, is_active, sort_order, included_in_auto_schedule, gender_restriction, work_windows, saturday_windows, split_halves, hours_event, hours_monday, hours_tuesday, hours_wednesday, hours_thursday, hours_friday, hours_saturday")
       .eq("hour_based", true)
       .order("sort_order"),
     supabase.from("positions").select("id, name").eq("hour_based", false),

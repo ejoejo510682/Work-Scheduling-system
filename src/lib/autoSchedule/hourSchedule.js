@@ -48,9 +48,7 @@ function hoursKey(date, specialDates) {
   const wd = getWeekdayIndex(date);
   if (wd === 5) return "hours_saturday";
   if (isPriorityShippingDay(date, specialDates).isPriority) return "hours_event";
-  if (wd <= 1) return "hours_mon_tue";
-  if (wd === 2) return "hours_wednesday";
-  return "hours_thu_fri";
+  return ["hours_monday", "hours_tuesday", "hours_wednesday", "hours_thursday", "hours_friday"][wd];
 }
 
 // 週六有另外設可以做的時間就用週六的（2026-11-28：無包裝出貨週六從早上開始）
