@@ -101,6 +101,9 @@ export default async function HourSchedulePreviewPage({ searchParams }: { search
         </Link>
         <div className="ml-auto flex gap-3">
           <LightModeToggle />
+          <Link href={`/admin/schedule/hours/print?week=${monday}`} className={navClass}>
+            🖨 總班表（列印／PDF）
+          </Link>
           <Link href={`/admin/schedule?week=${monday}`} className={navClass}>
             回現在的週排班表
           </Link>
