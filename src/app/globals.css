@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* 深色照系統設定；頁面加上 force-light 時強制淺色（新版試排截圖用） */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:not(:where(.force-light, .force-light *)) {
+      @slot;
+    }
+  }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -13,10 +22,14 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.force-light) {
     --background: #0a0a0a;
     --foreground: #ededed;
   }
+}
+
+html.force-light {
+  color-scheme: light;
 }
 
 body {

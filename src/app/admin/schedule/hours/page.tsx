@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { addDays, getDefaultWeekMonday, getMonday } from "@/lib/date";
 import { loadHourScheduleInput } from "@/lib/autoSchedule/loadHourInput";
 import { generateHourSchedule } from "@/lib/autoSchedule/hourSchedule";
+import { LightModeToggle } from "./LightModeToggle";
 
 // 新版排班（時數制）試排頁：每次打開都照目前的設定重新試排，不存檔、不影響現在的班表
 type Segment = { date: string; pt_id: string; position_id: string; start: string; end: string };
@@ -98,9 +99,12 @@ export default async function HourSchedulePreviewPage({ searchParams }: { search
         <Link href={`/admin/schedule/hours?week=${addDays(monday, 7)}`} className={navClass}>
           下一週 →
         </Link>
-        <Link href={`/admin/schedule?week=${monday}`} className={`ml-auto ${navClass}`}>
-          回現在的週排班表
-        </Link>
+        <div className="ml-auto flex gap-3">
+          <LightModeToggle />
+          <Link href={`/admin/schedule?week=${monday}`} className={navClass}>
+            回現在的週排班表
+          </Link>
+        </div>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1 text-xs">
