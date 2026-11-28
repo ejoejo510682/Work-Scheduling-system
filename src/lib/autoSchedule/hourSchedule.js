@@ -587,6 +587,69 @@ function scheduleOnce(input) {
         if (shortBlocks(date) >= before) restoreDay(date, snap);
       }
     }
+
+    smoothHandoffs(date);
+  }
+
+  // 同一個崗位換人接手時，時間要接在一起，不要中間空半小時又有人來（2026-11-29 Cynthia：無包裝）。
+  // 例如兩人重疊做無包裝，一人 15:30 下班、另一人 16:00 才換過來：讓兩個人換崗位的時間各移半小時，每個人時數不變
+  function handoffGaps(date, posId) {
+    let n = 0;
+    for (const half of [true, false]) {
+      const c = [...win(posId, date)].filter((b) => isMorning(b) === half).sort((a, b) => a - b).map((b) => occ.get(date)?.get(`${b}|${posId}`) || 0);
+      for (let k = 1; k <= Math.max(0, ...c); k++) n += c.filter((v, i) => v >= k && (i === 0 || c[i - 1] < k)).length - 1;
+    }
+    return n;
+  }
+  function smoothHandoffs(date) {
+    const movable = (s, posId) =>
+      posId !== printer?.id && posId !== driverPos?.id && posById.get(posId)?.included_in_auto_schedule !== false && !(isFullTime(s) && mains(s).includes(posId));
+    const edges = () =>
+      staff.flatMap((s) => {
+        const bs = [...cell(date, s.id)].sort((a, b) => a[0] - b[0]);
+        const out = [];
+        for (let i = 1; i < bs.length; i++) {
+          const [b0, a] = bs[i - 1];
+          const [b1, c] = bs[i];
+          if (a === c || !movable(s, a) || !movable(s, c)) continue;
+          out.push({ s, b: b0, from: a, to: c }, { s, b: b1, from: c, to: a });
+        }
+        return out;
+      });
+    const stillOk = (date, b, posId) =>
+      staff.every((x) => cell(date, x.id).get(b) !== posId || level(x.id, posId) !== 2 || someoneLevel3At(date, posId, b));
+    const halvesOk = (p) => !needsBothHalves(p, date) || (halfUsed(p, date, true) > 0 && halfUsed(p, date, false) > 0);
+    for (let round = 0; round < 50; round++) {
+      let improved = false;
+      const es = edges();
+      for (const e1 of es) {
+        for (const e2 of es) {
+          if (e1.s === e2.s || e1.from !== e2.to || e1.to !== e2.from) continue;
+          const ids = [e1.from, e1.to];
+          const before = ids.reduce((n, id) => n + handoffGaps(date, id), 0);
+          if (before === 0) continue;
+          const halvesBefore = ids.map((id) => halvesOk(posById.get(id)));
+          for (const e of [e1, e2]) {
+            unassign(e.s, date, e.b);
+            assign(e.s, date, e.b, e.to);
+          }
+          const ok =
+            [e1, e2].every((e) => canDo(e.s, e.to, date, e.b, { ignoreRemaining: true }) && keepsSequence(e.s, date, e.b, e.to) && stillOk(date, e.b, e.from)) &&
+            ids.every((id, i) => !halvesBefore[i] || halvesOk(posById.get(id))) &&
+            ids.reduce((n, id) => n + handoffGaps(date, id), 0) < before;
+          if (ok) {
+            improved = true;
+            break;
+          }
+          for (const e of [e1, e2]) {
+            unassign(e.s, date, e.b);
+            assign(e.s, date, e.b, e.from);
+          }
+        }
+        if (improved) break;
+      }
+      if (!improved) return;
+    }
   }
 
   // 週六 PT：B組、A組交錯，各組裡離上次上週六最久的先，同樣再照排班順序
